@@ -5,7 +5,7 @@
 #include <boost/random.hpp>
 #include <boost/generator_iterator.hpp>
 
-#include <glog/logging.h>
+//#include <glog/logging.h>
 
 using boost::variate_generator;
 using boost::mt19937;
@@ -76,9 +76,9 @@ std::ostream& operator<< ( std::ostream& out, Event& event) {
 
 int main(int argc, char **argv) {
     // Initialize Google Logging
-    google::InitGoogleLogging(argv[0]);
+    //google::InitGoogleLogging(argv[0]);
     // Log to Stderr
-    FLAGS_logtostderr = 1;
+    //FLAGS_logtostderr = 1;
 
     int seed = time(0);
     double distribution_mean = 3.0;
@@ -107,8 +107,8 @@ int main(int argc, char **argv) {
         heap.pop();
 
         if (current_event == NULL) {
-            LOG(ERROR) << "Simulation not complete and there are no events in the min heap.";
-            LOG(ERROR) << "\tsimulation time: " << simulation_time_s;
+            std::cerr << "Simulation not complete and there are no events in the min heap." << std::endl;
+            std::cerr << "\tsimulation time: " << simulation_time_s << std::endl;
             exit(0);
         }
 
@@ -151,22 +151,22 @@ int main(int argc, char **argv) {
                 total_departures++;
                 break;
             default:
-                LOG(ERROR) << "Simulation had an event with an unknown type: " << current_event->type;
-                LOG(ERROR) << "\tsimulation time: " << simulation_time_s;
+                std::cerr << "Simulation had an event with an unknown type: " << current_event->type << std::endl;
+                std::cerr << "\tsimulation time: " << simulation_time_s << std::endl;
                 exit(0);
         }
 
-        VLOG(2) << *current_event << ", h: " << heap.size() << ", q: " << queue.size();
+        //std::cout << *current_event << ", h: " << heap.size() << ", q: " <^< queue.size() << std::endl;
 
         delete current_event; // Event's are created with new, so we need to delete them when we're done with them
     }
 
-    LOG(INFO) << "The simulation ended at time: " << end_simulation_time_s;
-    VLOG(1) << "The server was busy for time: " << server_work_time;
-    LOG(INFO) << "The server utilization was: " << server_work_time / end_simulation_time_s;
-    LOG(INFO) << "The average length of the queue was: " << sum_of_time_queue_length / end_simulation_time_s;
-    VLOG(1) << "Total time spent in the queue: " << total_queue_time;
-    VLOG(1) << "Total departures: " << total_departures;
-    LOG(INFO) << "The average time spent in queue: " << total_queue_time / total_departures;
+    std::cout << "The simulation ended at time: " << end_simulation_time_s << std::endl;
+    //VLOG(1) << "The server was busy for time: " << server_work_time;
+    std::cout << "The average server utilization was: " << server_work_time / end_simulation_time_s << std::endl;
+    std::cout << "The average length of the queue was: " << sum_of_time_queue_length / end_simulation_time_s << std::endl;
+    //VLOG(1) << "Total time spent in the queue: " << total_queue_time;
+    //VLOG(1) << "Total departures: " << total_departures;
+    std::cout << "The average time spent in queue: " << total_queue_time / total_departures << std::endl;
 }
 
