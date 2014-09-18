@@ -9,4 +9,9 @@ add_executable(kg_hw1
 
 target_link_libraries(kg_hw1 ${Boost_SYSTEM_LIBRARY} ${GLOG_LIBRARIES})
 
+add_executable(kg_hw2
+    hw2)
+
+target_link_libraries(kg_hw2 ${Boost_SYSTEM_LIBRARY} ${GLOG_LIBRARIES})
+
 
