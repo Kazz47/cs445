@@ -20,7 +20,9 @@ const std::string event_names[NUMBER_EVENT_TYPES] = {
     "CLOSE"
 };
 
-std::vector<bool> servers_status;
+bool closed = false;
+
+std::vector<bool> servers_idle;
 std::vector< std::queue<double>* > servers_queue;
 
 /**
@@ -80,11 +82,10 @@ std::ostream& operator<< ( std::ostream& out, Event& event) {
 }
 
 
-bool server_idle(int *idle_index) {
-    idle_index = NULL;
-    for (int i = 0; i < servers_status.size(); i++) {
-        if (servers_status[i] == true) {
-            *idle_index = i;
+bool server_idle(int &idle_index) {
+    for (int i = 0; i < servers_idle.size(); i++) {
+        if (servers_idle[i] == true) {
+            idle_index = i;
             return true;
         }
     }
@@ -101,9 +102,8 @@ void addToQueue(double enqueue_time) {
     shortest->push(enqueue_time);
 }
 
-void run_simulation(const double end_time, variate_generator< mt19937, exponential_distribution<> > rand_generator) {
+void run_simulation(const double close_time, variate_generator< mt19937, exponential_distribution<> > rand_generator) {
     double simulation_time_s = 0;
-    double end_simulation_time_s = end_time;
     double previous_time_s;
 
     double server_work_time = 0;
@@ -118,8 +118,11 @@ void run_simulation(const double end_time, variate_generator< mt19937, exponenti
 
     // Put initial event in the heap
     heap.push(new Event(simulation_time_s + rand_generator(), 0));
+    heap.push(new Event(close_time, 2));
 
-    while (simulation_time_s  < end_simulation_time_s) {
+    VLOG(2) << "Start Simulation...";
+
+    while (!heap.empty()) {
         Event *current_event = heap.top();
         heap.pop();
 
@@ -137,19 +140,24 @@ void run_simulation(const double end_time, variate_generator< mt19937, exponenti
         // Calculate sum of time queue length for all servers
         //sum_of_time_queue_length += queue.size() * time_since_last;
 
-        int *idle_index = NULL;
+        int idle_index = -1;
         switch (current_event->type) {
             case 0: // ARRIVE
                 // If the server is busy add new arrival to waiting queue
                 // otherwise set the server as busy and add new departure time.
+                VLOG(2) << "Arrival Begin";
                 if (!server_idle(idle_index)) {
                     addToQueue(simulation_time_s);
                 } else {
-                    servers_status[*idle_index] = false;
-                    heap.push(new Event(simulation_time_s + rand_generator(), simulation_time_s, *idle_index, 1));
+                    VLOG(2) << "Idle Index: " << idle_index;
+                    servers_idle[idle_index] = false;
+                    heap.push(new Event(simulation_time_s + rand_generator(), simulation_time_s, idle_index, 1));
                 }
-                // Add next arrival event
-                heap.push(new Event(simulation_time_s + rand_generator(), 0));
+                if (!closed) {
+                    // Add next arrival event
+                    heap.push(new Event(simulation_time_s + rand_generator(), 0));
+                }
+                VLOG(2) << "Arrival End";
                 break;
             case 1: // DEPART
                 // Add server busy time.
@@ -158,8 +166,9 @@ void run_simulation(const double end_time, variate_generator< mt19937, exponenti
                 // If the queue is empty set the server to idle otherwise
                 // get the next person from the queue and set their departure
                 // time.
+                VLOG(2) << "Depart Begin";
                 if (servers_queue[current_event->server_index]->empty()) {
-                    servers_status[current_event->server_index] = true;
+                    servers_idle[current_event->server_index] = true;
                 } else {
                     // Add current simulation time minus time stored in the
                     // queue to the total queue time.
@@ -169,6 +178,12 @@ void run_simulation(const double end_time, variate_generator< mt19937, exponenti
                     heap.push(new Event(simulation_time_s + rand_generator(), simulation_time_s, current_event->server_index, 1));
                 }
                 total_departures++;
+                VLOG(2) << "Depart End";
+                break;
+            case 2: // CLOSE
+                // Set flag to stop arrivals
+                VLOG(2) << "Closed";
+                closed = true;
                 break;
             default:
                 LOG(ERROR) << "Simulation had an event with an unknown type: " << current_event->type;
@@ -176,15 +191,15 @@ void run_simulation(const double end_time, variate_generator< mt19937, exponenti
                 exit(0);
         }
 
-        VLOG(2) << *current_event << ", h: " << heap.size() << ", q: " << servers_queue[current_event->server_index]->size();
+        VLOG(3) << *current_event << ", h: " << heap.size();
 
         delete current_event; // Event's are created with new, so we need to delete them when we're done with them
     }
 
-    LOG(INFO) << "The simulation ended at time: " << end_simulation_time_s;
+    LOG(INFO) << "The simulation ended at time: " << simulation_time_s;
     VLOG(1) << "The server was busy for time: " << server_work_time;
-    LOG(INFO) << "The server utilization was: " << server_work_time / end_simulation_time_s;
-    LOG(INFO) << "The average length of the queue was: " << sum_of_time_queue_length / end_simulation_time_s;
+    LOG(INFO) << "The server utilization was: " << server_work_time / simulation_time_s;
+    LOG(INFO) << "The average length of the queue was: " << sum_of_time_queue_length / simulation_time_s;
     VLOG(1) << "Total time spent in the queue: " << total_queue_time;
     VLOG(1) << "Total departures: " << total_departures;
     LOG(INFO) << "The average time spent in queue: " << total_queue_time / total_departures;
@@ -201,7 +216,11 @@ int main(int argc, char **argv) {
     variate_generator< mt19937, exponential_distribution<> > rand_generator(mt19937(seed), exponential_distribution<>(1/distribution_mean));
 
     // Init number of servers
-    // TODO
+    int num_servers = 2;
+    for (int i = 0; i < num_servers; i++) {
+        servers_idle.push_back(true);
+        servers_queue.push_back(new std::queue<double>());
+    }
 
     run_simulation(atoi(argv[1]), rand_generator);
 }
