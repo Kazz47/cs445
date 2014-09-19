@@ -106,12 +106,16 @@ void run_simulation(const double close_time, variate_generator< mt19937, exponen
     double simulation_time_s = 0;
     double previous_time_s;
 
-    double server_work_time = 0;
+    std::vector<double> servers_work_time;
+    std::vector<double> servers_time_queue_length;
+    for (int i = 0; i < servers_idle.size(); i++) {
+        servers_work_time.push_back(0);
+        servers_time_queue_length.push_back(0);
+    }
 
     double total_queue_time = 0;
     double total_departures = 0;
 
-    double sum_of_time_queue_length = 0;
 
     std::priority_queue<Event*, std::vector<Event*>, CompareEvent> heap;
     //std::queue<double> queue;
@@ -138,7 +142,9 @@ void run_simulation(const double close_time, variate_generator< mt19937, exponen
         // Calculate average time stuff
         double time_since_last = simulation_time_s - previous_time_s;
         // Calculate sum of time queue length for all servers
-        //sum_of_time_queue_length += queue.size() * time_since_last;
+        for (int i = 0; i < servers_idle.size(); i++) {
+            servers_time_queue_length[i] += servers_queue[i]->size() * time_since_last;
+        }
 
         int idle_index = -1;
         switch (current_event->type) {
@@ -162,7 +168,7 @@ void run_simulation(const double close_time, variate_generator< mt19937, exponen
             case 1: // DEPART
                 // Add server busy time.
                 // Which server is busy?
-                //server_work_time += simulation_time_s - current_event->server_start_time;
+                servers_work_time[current_event->server_index] += simulation_time_s - current_event->server_start_time;
                 // If the queue is empty set the server to idle otherwise
                 // get the next person from the queue and set their departure
                 // time.
@@ -172,7 +178,7 @@ void run_simulation(const double close_time, variate_generator< mt19937, exponen
                 } else {
                     // Add current simulation time minus time stored in the
                     // queue to the total queue time.
-                    // total_queue_time += simulation_time_s - queue.front();
+                    total_queue_time += simulation_time_s - servers_queue[current_event->server_index]->front();
                     servers_queue[current_event->server_index]->pop();
                     // Add a new depature to the heap.
                     heap.push(new Event(simulation_time_s + rand_generator(), simulation_time_s, current_event->server_index, 1));
@@ -197,9 +203,12 @@ void run_simulation(const double close_time, variate_generator< mt19937, exponen
     }
 
     LOG(INFO) << "The simulation ended at time: " << simulation_time_s;
-    VLOG(1) << "The server was busy for time: " << server_work_time;
-    LOG(INFO) << "The server utilization was: " << server_work_time / simulation_time_s;
-    LOG(INFO) << "The average length of the queue was: " << sum_of_time_queue_length / simulation_time_s;
+    LOG(INFO) << "The simulation ended " << simulation_time_s - close_time << " after close.";
+    for (int i = 0; i < servers_idle.size(); i++) {
+        VLOG(1) << "The server " << i+1 << " was busy for time: " << servers_work_time[i];
+        LOG(INFO) << "The server " << i+1 << " utilization was: " << servers_work_time[i] / simulation_time_s;
+        LOG(INFO) << "The average length of server " << i+1 << " queue was: " << servers_time_queue_length[i] / simulation_time_s;
+    }
     VLOG(1) << "Total time spent in the queue: " << total_queue_time;
     VLOG(1) << "Total departures: " << total_departures;
     LOG(INFO) << "The average time spent in queue: " << total_queue_time / total_departures;
@@ -223,5 +232,9 @@ int main(int argc, char **argv) {
     }
 
     run_simulation(atoi(argv[1]), rand_generator);
+
+    for (int i = 0; i < num_servers; i++) {
+        delete servers_queue[i];
+    }
 }
 
