@@ -1,6 +1,7 @@
 #include <iostream>
 #include <queue>
 #include <string>
+#include <limits>
 
 #include <boost/random.hpp>
 #include <boost/generator_iterator.hpp>
@@ -24,6 +25,12 @@ bool closed = false;
 
 std::vector<bool> servers_idle;
 std::vector< std::queue<double>* > servers_queue;
+
+// Stats vectors
+std::vector<double> times_after_close;
+std::vector<double> average_times_in_queue;
+std::vector< std::vector<double>* > average_server_utilizations;
+std::vector< std::vector<double>* > average_length_of_queues;
 
 /**
  *  A class for an event, which holds an int for the event type, a double for simulation time and possibly other data.
@@ -102,9 +109,20 @@ void addToQueue(double enqueue_time) {
     shortest->push(enqueue_time);
 }
 
-void run_simulation(const double close_time, variate_generator< mt19937, exponential_distribution<> > rand_generator) {
+void jockey(const int &departed_queue) {
+    for (int i = 1; i < servers_queue.size(); i++) {
+        int pos = departed_queue - i;
+        if (pos < 0) pos = servers_queue.size() + pos;
+        if (servers_queue[departed_queue]->size() < servers_queue[pos]->size()) {
+            servers_queue[departed_queue]->push(servers_queue[pos]->front());
+            servers_queue[pos]->pop();
+        }
+    }
+}
+
+void run_simulation(const double close_time, variate_generator< mt19937, exponential_distribution<> > &rand_generator) {
     double simulation_time_s = 0;
-    double previous_time_s;
+    double previous_time_s = 0;
 
     std::vector<double> servers_work_time;
     std::vector<double> servers_time_queue_length;
@@ -118,7 +136,6 @@ void run_simulation(const double close_time, variate_generator< mt19937, exponen
 
 
     std::priority_queue<Event*, std::vector<Event*>, CompareEvent> heap;
-    //std::queue<double> queue;
 
     // Put initial event in the heap
     heap.push(new Event(simulation_time_s + rand_generator(), 0));
@@ -169,6 +186,7 @@ void run_simulation(const double close_time, variate_generator< mt19937, exponen
                 // Add server busy time.
                 // Which server is busy?
                 servers_work_time[current_event->server_index] += simulation_time_s - current_event->server_start_time;
+                jockey(current_event->server_index);
                 // If the queue is empty set the server to idle otherwise
                 // get the next person from the queue and set their departure
                 // time.
@@ -202,16 +220,24 @@ void run_simulation(const double close_time, variate_generator< mt19937, exponen
         delete current_event; // Event's are created with new, so we need to delete them when we're done with them
     }
 
-    LOG(INFO) << "The simulation ended at time: " << simulation_time_s;
-    LOG(INFO) << "The simulation ended " << simulation_time_s - close_time << " after close.";
+    assert(heap.empty());
+
+    VLOG(1) << "The simulation ended at time: " << simulation_time_s;
+    times_after_close.push_back(simulation_time_s - close_time);
+    VLOG(1) << "The simulation ended " << simulation_time_s - close_time << " after close.";
+    average_server_utilizations.push_back(new std::vector<double>());
+    average_length_of_queues.push_back(new std::vector<double>());
     for (int i = 0; i < servers_idle.size(); i++) {
         VLOG(1) << "The server " << i+1 << " was busy for time: " << servers_work_time[i];
-        LOG(INFO) << "The server " << i+1 << " utilization was: " << servers_work_time[i] / simulation_time_s;
-        LOG(INFO) << "The average length of server " << i+1 << " queue was: " << servers_time_queue_length[i] / simulation_time_s;
+        (*(average_server_utilizations.end()-1))->push_back(servers_work_time[i] / simulation_time_s);
+        VLOG(1) << "The server " << i+1 << " utilization was: " << servers_work_time[i] / simulation_time_s;
+        (*(average_length_of_queues.end()-1))->push_back(servers_time_queue_length[i] / simulation_time_s);
+        VLOG(1) << "The average length of server " << i+1 << " queue was: " << servers_time_queue_length[i] / simulation_time_s;
     }
     VLOG(1) << "Total time spent in the queue: " << total_queue_time;
     VLOG(1) << "Total departures: " << total_departures;
-    LOG(INFO) << "The average time spent in queue: " << total_queue_time / total_departures;
+    average_times_in_queue.push_back(total_queue_time / total_departures);
+    VLOG(1) << "The average time spent in queue: " << total_queue_time / total_departures;
 }
 
 int main(int argc, char **argv) {
@@ -224,17 +250,90 @@ int main(int argc, char **argv) {
     double distribution_mean = 3.0;
     variate_generator< mt19937, exponential_distribution<> > rand_generator(mt19937(seed), exponential_distribution<>(1/distribution_mean));
 
-    // Init number of servers
+    // Intiate
     int num_servers = 2;
-    for (int i = 0; i < num_servers; i++) {
-        servers_idle.push_back(true);
-        servers_queue.push_back(new std::queue<double>());
-    }
+    int num_iterations = 10;
 
-    run_simulation(atoi(argv[1]), rand_generator);
+    for (int i = 0; i < num_iterations; i++) {
+        closed = false;
+        servers_idle.clear();
+        servers_queue.clear();
+        for (int i = 0; i < num_servers; i++) {
+            servers_idle.push_back(true);
+            servers_queue.push_back(new std::queue<double>());
+        }
+        run_simulation(atoi(argv[1]), rand_generator);
+    }
 
     for (int i = 0; i < num_servers; i++) {
         delete servers_queue[i];
     }
+
+    // Collect and print statistics.
+
+    double sum_average_queue_time = std::accumulate(average_times_in_queue.begin(), average_times_in_queue.end(), 0.0);
+    double min_average_queue_time = *std::min_element(average_times_in_queue.begin(), average_times_in_queue.end());
+    double max_average_queue_time = *std::max_element(average_times_in_queue.begin(), average_times_in_queue.end());
+    double avg_average_queue_time = sum_average_queue_time / average_times_in_queue.size();
+    double sqr_average_queue_time = std::inner_product(average_times_in_queue.begin(), average_times_in_queue.end(), average_times_in_queue.begin(), 0.0);
+    double std_average_queue_time = std::sqrt(sqr_average_queue_time / average_times_in_queue.size() - avg_average_queue_time * avg_average_queue_time);
+
+    double sum_times_after_close = std::accumulate(times_after_close.begin(), times_after_close.end(), 0.0);
+    double min_times_after_close = *std::min_element(times_after_close.begin(), times_after_close.end());
+    double max_times_after_close = *std::max_element(times_after_close.begin(), times_after_close.end());
+    double avg_times_after_close = sum_times_after_close / average_times_in_queue.size();
+    double sqr_times_after_close = std::inner_product(times_after_close.begin(), times_after_close.end(), times_after_close.begin(), 0.0);
+    double std_times_after_close = std::sqrt(sqr_times_after_close / times_after_close.size() - avg_times_after_close * avg_times_after_close);
+
+    for (int j = 0; j < num_servers; j++) {
+        double min_server_utilization = std::numeric_limits<double>::max();
+        double max_server_utilization = std::numeric_limits<double>::min();
+        double sum_server_utilization = 0;
+        double min_average_length = std::numeric_limits<double>::max();
+        double max_average_length = std::numeric_limits<double>::min();
+        double sum_average_length = 0;
+        for (int i = 0; i < num_iterations; i++) {
+            double current_utilization = (*average_server_utilizations[i])[j];
+            sum_server_utilization += current_utilization;
+            if (current_utilization > max_server_utilization) max_server_utilization = current_utilization;
+            if (current_utilization < min_server_utilization) min_server_utilization = current_utilization;
+
+            double current_average_length = (*average_length_of_queues[i])[j];
+            sum_average_length += current_average_length;
+            if (current_average_length > max_average_length) max_average_length = current_average_length;
+            if (current_average_length < min_average_length) min_average_length = current_average_length;
+        }
+        LOG(INFO) << "-----------------------------------------";
+        LOG(INFO) << "------ AVERAGE SERVER UTILIZATION  ------";
+        LOG(INFO) << "-----------------------------------------";
+        LOG(INFO) << "Min server utiliation for server " << j+1 << ": " << min_server_utilization;
+        LOG(INFO) << "Max server utiliation for server " << j+1 << ": " << max_server_utilization;
+        LOG(INFO) << "Average server utilization for server " << j+1 << ": " << sum_server_utilization / num_iterations;
+
+        LOG(INFO) << "-----------------------------------------";
+        LOG(INFO) << "--------- AVERAGE QUEUE LENGTH ----------";
+        LOG(INFO) << "-----------------------------------------";
+        LOG(INFO) << "Min queue length for server " << j+1 << ": " << min_average_length;
+        LOG(INFO) << "Max queue length for server " << j+1 << ": " << max_average_length;
+        LOG(INFO) << "Average queue length for server " << j+1 << ": " << sum_average_length / num_iterations;
+    }
+
+    LOG(INFO) << "-----------------------------------------";
+    LOG(INFO) << "---------- AVERAGE QUEUE TIMES ----------";
+    LOG(INFO) << "-----------------------------------------";
+    LOG(INFO) << "Min of times after close: " << min_average_queue_time;
+    LOG(INFO) << "Max of times after close: " << max_average_queue_time;
+    LOG(INFO) << "Mean of average queue times: " << avg_average_queue_time;
+    LOG(INFO) << "Standard deviation of average queue times: " << std_average_queue_time;
+
+    LOG(INFO) << "------------------------------------------";
+    LOG(INFO) << "-------- AVERAGE TIME AFTER CLOSE --------";
+    LOG(INFO) << "------------------------------------------";
+    LOG(INFO) << "Min of times after close: " << min_times_after_close;
+    LOG(INFO) << "Max of times after close: " << max_times_after_close;
+    LOG(INFO) << "Mean of times after close: " << avg_times_after_close;
+    LOG(INFO) << "Standard deviation of times after close: " << std_times_after_close;
+
+    LOG(INFO) << "------------------------------------------";
 }
 
