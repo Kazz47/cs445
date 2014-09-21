@@ -1,4 +1,5 @@
 #include <iostream>
+#include <fstream>
 #include <queue>
 #include <string>
 #include <limits>
@@ -31,6 +32,9 @@ std::vector<double> times_after_close;
 std::vector<double> average_times_in_queue;
 std::vector< std::vector<double>* > average_server_utilizations;
 std::vector< std::vector<double>* > average_length_of_queues;
+
+// Output File
+std::ofstream outfile;
 
 /**
  *  A class for an event, which holds an int for the event type, a double for simulation time and possibly other data.
@@ -285,6 +289,10 @@ int main(int argc, char **argv) {
     double sqr_times_after_close = std::inner_product(times_after_close.begin(), times_after_close.end(), times_after_close.begin(), 0.0);
     double std_times_after_close = std::sqrt(sqr_times_after_close / times_after_close.size() - avg_times_after_close * avg_times_after_close);
 
+
+    std::stringstream filename;
+    filename << "servers_stats_" << num_servers << ".dat";
+    outfile.open(filename.str());
     for (int j = 0; j < num_servers; j++) {
         double min_server_utilization = std::numeric_limits<double>::max();
         double max_server_utilization = std::numeric_limits<double>::min();
@@ -303,37 +311,43 @@ int main(int argc, char **argv) {
             if (current_average_length > max_average_length) max_average_length = current_average_length;
             if (current_average_length < min_average_length) min_average_length = current_average_length;
         }
-        LOG(INFO) << "-----------------------------------------";
-        LOG(INFO) << "------ AVERAGE SERVER UTILIZATION  ------";
-        LOG(INFO) << "-----------------------------------------";
-        LOG(INFO) << "Min server utiliation for server " << j+1 << ": " << min_server_utilization;
-        LOG(INFO) << "Max server utiliation for server " << j+1 << ": " << max_server_utilization;
-        LOG(INFO) << "Average server utilization for server " << j+1 << ": " << sum_server_utilization / num_iterations;
+        outfile << "-----------------------------------------" << std::endl;
+        outfile << "- AVERAGE SERVER UTILIZATION - SERVER " << j+1 << " -" << std::endl;
+        outfile << "-----------------------------------------" << std::endl;
+        outfile << "Min server utiliation for server " << j+1 << ": " << min_server_utilization << std::endl;
+        outfile << "Max server utiliation for server " << j+1 << ": " << max_server_utilization << std::endl;
+        outfile << "Average server utilization for server " << j+1 << ": " << sum_server_utilization / num_iterations << std::endl;
+        outfile << std::endl;
 
-        LOG(INFO) << "-----------------------------------------";
-        LOG(INFO) << "--------- AVERAGE QUEUE LENGTH ----------";
-        LOG(INFO) << "-----------------------------------------";
-        LOG(INFO) << "Min queue length for server " << j+1 << ": " << min_average_length;
-        LOG(INFO) << "Max queue length for server " << j+1 << ": " << max_average_length;
-        LOG(INFO) << "Average queue length for server " << j+1 << ": " << sum_average_length / num_iterations;
+        outfile << "-----------------------------------------" << std::endl;
+        outfile << "---- AVERAGE QUEUE LENGTH - SERVER " << j+1 << " ----" << std::endl;
+        outfile << "-----------------------------------------" << std::endl;
+        outfile << "Min queue length for server " << j+1 << ": " << min_average_length << std::endl;
+        outfile << "Max queue length for server " << j+1 << ": " << max_average_length << std::endl;
+        outfile << "Average queue length for server " << j+1 << ": " << sum_average_length / num_iterations << std::endl;
+        outfile << std::endl;
+        outfile << std::endl;
     }
 
-    LOG(INFO) << "-----------------------------------------";
-    LOG(INFO) << "---------- AVERAGE QUEUE TIMES ----------";
-    LOG(INFO) << "-----------------------------------------";
-    LOG(INFO) << "Min of times after close: " << min_average_queue_time;
-    LOG(INFO) << "Max of times after close: " << max_average_queue_time;
-    LOG(INFO) << "Mean of average queue times: " << avg_average_queue_time;
-    LOG(INFO) << "Standard deviation of average queue times: " << std_average_queue_time;
+    outfile << "-----------------------------------------" << std::endl;
+    outfile << "---------- AVERAGE QUEUE TIMES ----------" << std::endl;
+    outfile << "-----------------------------------------" << std::endl;
+    outfile << "Min of times after close: " << min_average_queue_time << std::endl;
+    outfile << "Max of times after close: " << max_average_queue_time << std::endl;
+    outfile << "Mean of average queue times: " << avg_average_queue_time << std::endl;
+    outfile << "Standard deviation of average queue times: " << std_average_queue_time << std::endl;
+    outfile << std::endl;
 
-    LOG(INFO) << "------------------------------------------";
-    LOG(INFO) << "-------- AVERAGE TIME AFTER CLOSE --------";
-    LOG(INFO) << "------------------------------------------";
-    LOG(INFO) << "Min of times after close: " << min_times_after_close;
-    LOG(INFO) << "Max of times after close: " << max_times_after_close;
-    LOG(INFO) << "Mean of times after close: " << avg_times_after_close;
-    LOG(INFO) << "Standard deviation of times after close: " << std_times_after_close;
+    outfile << "------------------------------------------" << std::endl;
+    outfile << "-------- AVERAGE TIME AFTER CLOSE --------" << std::endl;
+    outfile << "------------------------------------------" << std::endl;
+    outfile << "Min of times after close: " << min_times_after_close << std::endl;
+    outfile << "Max of times after close: " << max_times_after_close << std::endl;
+    outfile << "Mean of times after close: " << avg_times_after_close << std::endl;
+    outfile << "Standard deviation of times after close: " << std_times_after_close << std::endl;
+    outfile << std::endl;
 
-    LOG(INFO) << "------------------------------------------";
+    outfile << "------------------------------------------" << std::endl;
+    outfile.close();
 }
 
