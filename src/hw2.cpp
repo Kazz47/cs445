@@ -255,99 +255,112 @@ int main(int argc, char **argv) {
     variate_generator< mt19937, exponential_distribution<> > rand_generator(mt19937(seed), exponential_distribution<>(1/distribution_mean));
 
     // Intiate
-    int num_servers = 2;
+    int duration = 480;
+    int min_servers = 4;
+    int max_servers = 7;
     int num_iterations = 10;
 
-    for (int i = 0; i < num_iterations; i++) {
-        closed = false;
-        servers_idle.clear();
-        servers_queue.clear();
-        for (int i = 0; i < num_servers; i++) {
-            servers_idle.push_back(true);
-            servers_queue.push_back(new std::queue<double>());
-        }
-        run_simulation(atoi(argv[1]), rand_generator);
-    }
-
-    for (int i = 0; i < num_servers; i++) {
-        delete servers_queue[i];
-    }
-
-    // Collect and print statistics.
-
-    double sum_average_queue_time = std::accumulate(average_times_in_queue.begin(), average_times_in_queue.end(), 0.0);
-    double min_average_queue_time = *std::min_element(average_times_in_queue.begin(), average_times_in_queue.end());
-    double max_average_queue_time = *std::max_element(average_times_in_queue.begin(), average_times_in_queue.end());
-    double avg_average_queue_time = sum_average_queue_time / average_times_in_queue.size();
-    double sqr_average_queue_time = std::inner_product(average_times_in_queue.begin(), average_times_in_queue.end(), average_times_in_queue.begin(), 0.0);
-    double std_average_queue_time = std::sqrt(sqr_average_queue_time / average_times_in_queue.size() - avg_average_queue_time * avg_average_queue_time);
-
-    double sum_times_after_close = std::accumulate(times_after_close.begin(), times_after_close.end(), 0.0);
-    double min_times_after_close = *std::min_element(times_after_close.begin(), times_after_close.end());
-    double max_times_after_close = *std::max_element(times_after_close.begin(), times_after_close.end());
-    double avg_times_after_close = sum_times_after_close / average_times_in_queue.size();
-    double sqr_times_after_close = std::inner_product(times_after_close.begin(), times_after_close.end(), times_after_close.begin(), 0.0);
-    double std_times_after_close = std::sqrt(sqr_times_after_close / times_after_close.size() - avg_times_after_close * avg_times_after_close);
-
-
+    // Open files
     std::stringstream filename;
-    filename << "servers_stats_" << num_servers << ".dat";
+    filename << "servers_stats" << ".dat";
     outfile.open(filename.str());
-    for (int j = 0; j < num_servers; j++) {
-        double min_server_utilization = std::numeric_limits<double>::max();
-        double max_server_utilization = std::numeric_limits<double>::min();
-        double sum_server_utilization = 0;
-        double min_average_length = std::numeric_limits<double>::max();
-        double max_average_length = std::numeric_limits<double>::min();
-        double sum_average_length = 0;
-        for (int i = 0; i < num_iterations; i++) {
-            double current_utilization = (*average_server_utilizations[i])[j];
-            sum_server_utilization += current_utilization;
-            if (current_utilization > max_server_utilization) max_server_utilization = current_utilization;
-            if (current_utilization < min_server_utilization) min_server_utilization = current_utilization;
 
-            double current_average_length = (*average_length_of_queues[i])[j];
-            sum_average_length += current_average_length;
-            if (current_average_length > max_average_length) max_average_length = current_average_length;
-            if (current_average_length < min_average_length) min_average_length = current_average_length;
+    for (int i = min_servers; i <= max_servers; i++) {
+        int num_servers = i;
+        for (int j = 0; j < num_iterations; j++) {
+            closed = false;
+            servers_idle.clear();
+            servers_queue.clear();
+            for (int k = 0; k < num_servers; k++) {
+                servers_idle.push_back(true);
+                servers_queue.push_back(new std::queue<double>());
+            }
+            run_simulation(duration, rand_generator);
         }
-        outfile << "-----------------------------------------" << std::endl;
-        outfile << "- AVERAGE SERVER UTILIZATION - SERVER " << j+1 << " -" << std::endl;
-        outfile << "-----------------------------------------" << std::endl;
-        outfile << "Min server utiliation for server " << j+1 << ": " << min_server_utilization << std::endl;
-        outfile << "Max server utiliation for server " << j+1 << ": " << max_server_utilization << std::endl;
-        outfile << "Average server utilization for server " << j+1 << ": " << sum_server_utilization / num_iterations << std::endl;
+
+        for (int j = 0; j < num_servers; j++) {
+            delete servers_queue[j];
+        }
+
+        // Collect and print statistics.
+
+        double sum_average_queue_time = std::accumulate(average_times_in_queue.begin(), average_times_in_queue.end(), 0.0);
+        double min_average_queue_time = *std::min_element(average_times_in_queue.begin(), average_times_in_queue.end());
+        double max_average_queue_time = *std::max_element(average_times_in_queue.begin(), average_times_in_queue.end());
+        double avg_average_queue_time = sum_average_queue_time / average_times_in_queue.size();
+        double sqr_average_queue_time = std::inner_product(average_times_in_queue.begin(), average_times_in_queue.end(), average_times_in_queue.begin(), 0.0);
+        double std_average_queue_time = std::sqrt(sqr_average_queue_time / average_times_in_queue.size() - avg_average_queue_time * avg_average_queue_time);
+
+        double sum_times_after_close = std::accumulate(times_after_close.begin(), times_after_close.end(), 0.0);
+        double min_times_after_close = *std::min_element(times_after_close.begin(), times_after_close.end());
+        double max_times_after_close = *std::max_element(times_after_close.begin(), times_after_close.end());
+        double avg_times_after_close = sum_times_after_close / average_times_in_queue.size();
+        double sqr_times_after_close = std::inner_product(times_after_close.begin(), times_after_close.end(), times_after_close.begin(), 0.0);
+        double std_times_after_close = std::sqrt(sqr_times_after_close / times_after_close.size() - avg_times_after_close * avg_times_after_close);
+
+        outfile << "------------------------------------------" << std::endl;
+        outfile << "---------------- " << num_servers << " SERVERS" << " ---------------" << std::endl;
+        outfile << "------------------------------------------" << std::endl;
         outfile << std::endl;
 
+        for (int j = 0; j < num_servers; j++) {
+            double min_server_utilization = std::numeric_limits<double>::max();
+            double max_server_utilization = std::numeric_limits<double>::min();
+            double sum_server_utilization = 0;
+            double min_average_length = std::numeric_limits<double>::max();
+            double max_average_length = std::numeric_limits<double>::min();
+            double sum_average_length = 0;
+            for (int i = 0; i < num_iterations; i++) {
+                double current_utilization = (*average_server_utilizations[i])[j];
+                sum_server_utilization += current_utilization;
+                if (current_utilization > max_server_utilization) max_server_utilization = current_utilization;
+                if (current_utilization < min_server_utilization) min_server_utilization = current_utilization;
+
+                double current_average_length = (*average_length_of_queues[i])[j];
+                sum_average_length += current_average_length;
+                if (current_average_length > max_average_length) max_average_length = current_average_length;
+                if (current_average_length < min_average_length) min_average_length = current_average_length;
+            }
+            outfile << "-----------------------------------------" << std::endl;
+            outfile << "- AVERAGE SERVER UTILIZATION - SERVER " << j+1 << " -" << std::endl;
+            outfile << "-----------------------------------------" << std::endl;
+            outfile << "Min server utiliation for server " << j+1 << ": " << min_server_utilization << std::endl;
+            outfile << "Max server utiliation for server " << j+1 << ": " << max_server_utilization << std::endl;
+            outfile << "Average server utilization for server " << j+1 << ": " << sum_server_utilization / num_iterations << std::endl;
+            outfile << std::endl;
+
+            outfile << "-----------------------------------------" << std::endl;
+            outfile << "---- AVERAGE QUEUE LENGTH - SERVER " << j+1 << " ----" << std::endl;
+            outfile << "-----------------------------------------" << std::endl;
+            outfile << "Min queue length for server " << j+1 << ": " << min_average_length << std::endl;
+            outfile << "Max queue length for server " << j+1 << ": " << max_average_length << std::endl;
+            outfile << "Average queue length for server " << j+1 << ": " << sum_average_length / num_iterations << std::endl;
+            outfile << std::endl;
+            outfile << std::endl;
+        }
+
         outfile << "-----------------------------------------" << std::endl;
-        outfile << "---- AVERAGE QUEUE LENGTH - SERVER " << j+1 << " ----" << std::endl;
+        outfile << "---------- AVERAGE QUEUE TIMES ----------" << std::endl;
         outfile << "-----------------------------------------" << std::endl;
-        outfile << "Min queue length for server " << j+1 << ": " << min_average_length << std::endl;
-        outfile << "Max queue length for server " << j+1 << ": " << max_average_length << std::endl;
-        outfile << "Average queue length for server " << j+1 << ": " << sum_average_length / num_iterations << std::endl;
+        outfile << "Min of average queue times: " << min_average_queue_time << std::endl;
+        outfile << "Max of average queue times: " << max_average_queue_time << std::endl;
+        outfile << "Mean of average queue times: " << avg_average_queue_time << std::endl;
+        outfile << "Standard deviation of average queue times: " << std_average_queue_time << std::endl;
+        outfile << std::endl;
+
+        outfile << "------------------------------------------" << std::endl;
+        outfile << "-------- AVERAGE TIME AFTER CLOSE --------" << std::endl;
+        outfile << "------------------------------------------" << std::endl;
+        outfile << "Min of times after close: " << min_times_after_close << std::endl;
+        outfile << "Max of times after close: " << max_times_after_close << std::endl;
+        outfile << "Mean of times after close: " << avg_times_after_close << std::endl;
+        outfile << "Standard deviation of times after close: " << std_times_after_close << std::endl;
         outfile << std::endl;
         outfile << std::endl;
+        outfile << std::endl;
+        outfile << std::endl;
+
     }
-
-    outfile << "-----------------------------------------" << std::endl;
-    outfile << "---------- AVERAGE QUEUE TIMES ----------" << std::endl;
-    outfile << "-----------------------------------------" << std::endl;
-    outfile << "Min of times after close: " << min_average_queue_time << std::endl;
-    outfile << "Max of times after close: " << max_average_queue_time << std::endl;
-    outfile << "Mean of average queue times: " << avg_average_queue_time << std::endl;
-    outfile << "Standard deviation of average queue times: " << std_average_queue_time << std::endl;
-    outfile << std::endl;
-
-    outfile << "------------------------------------------" << std::endl;
-    outfile << "-------- AVERAGE TIME AFTER CLOSE --------" << std::endl;
-    outfile << "------------------------------------------" << std::endl;
-    outfile << "Min of times after close: " << min_times_after_close << std::endl;
-    outfile << "Max of times after close: " << max_times_after_close << std::endl;
-    outfile << "Mean of times after close: " << avg_times_after_close << std::endl;
-    outfile << "Standard deviation of times after close: " << std_times_after_close << std::endl;
-    outfile << std::endl;
-
-    outfile << "------------------------------------------" << std::endl;
     outfile.close();
 }
 
