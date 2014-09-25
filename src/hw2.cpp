@@ -124,7 +124,10 @@ void jockey(const int &departed_queue) {
     }
 }
 
-void run_simulation(const double close_time, variate_generator< mt19937, exponential_distribution<> > &rand_generator) {
+void run_simulation(
+        const double close_time,
+        variate_generator< mt19937, exponential_distribution<> > &arrival_generator,
+        variate_generator< mt19937, exponential_distribution<> > &departure_generator) {
     double simulation_time_s = 0;
     double previous_time_s = 0;
 
@@ -142,7 +145,7 @@ void run_simulation(const double close_time, variate_generator< mt19937, exponen
     std::priority_queue<Event*, std::vector<Event*>, CompareEvent> heap;
 
     // Put initial event in the heap
-    heap.push(new Event(simulation_time_s + rand_generator(), 0));
+    heap.push(new Event(simulation_time_s + arrival_generator(), 0));
     heap.push(new Event(close_time, 2));
 
     VLOG(2) << "Start Simulation...";
@@ -178,11 +181,11 @@ void run_simulation(const double close_time, variate_generator< mt19937, exponen
                 } else {
                     VLOG(2) << "Idle Index: " << idle_index;
                     servers_idle[idle_index] = false;
-                    heap.push(new Event(simulation_time_s + rand_generator(), simulation_time_s, idle_index, 1));
+                    heap.push(new Event(simulation_time_s + departure_generator(), simulation_time_s, idle_index, 1));
                 }
                 if (!closed) {
                     // Add next arrival event
-                    heap.push(new Event(simulation_time_s + rand_generator(), 0));
+                    heap.push(new Event(simulation_time_s + arrival_generator(), 0));
                 }
                 VLOG(2) << "Arrival End";
                 break;
@@ -203,7 +206,7 @@ void run_simulation(const double close_time, variate_generator< mt19937, exponen
                     total_queue_time += simulation_time_s - servers_queue[current_event->server_index]->front();
                     servers_queue[current_event->server_index]->pop();
                     // Add a new depature to the heap.
-                    heap.push(new Event(simulation_time_s + rand_generator(), simulation_time_s, current_event->server_index, 1));
+                    heap.push(new Event(simulation_time_s + departure_generator(), simulation_time_s, current_event->server_index, 1));
                 }
                 total_departures++;
                 VLOG(2) << "Depart End";
@@ -231,12 +234,14 @@ void run_simulation(const double close_time, variate_generator< mt19937, exponen
     VLOG(1) << "The simulation ended " << simulation_time_s - close_time << " after close.";
     average_server_utilizations.push_back(new std::vector<double>());
     average_length_of_queues.push_back(new std::vector<double>());
+    VLOG(1) << "Server util vector size: " << average_server_utilizations.size();
     for (int i = 0; i < servers_idle.size(); i++) {
         VLOG(1) << "The server " << i+1 << " was busy for time: " << servers_work_time[i];
-        (*(average_server_utilizations.end()-1))->push_back(servers_work_time[i] / simulation_time_s);
+        average_server_utilizations.back()->push_back(servers_work_time[i] / simulation_time_s);
         VLOG(1) << "The server " << i+1 << " utilization was: " << servers_work_time[i] / simulation_time_s;
-        (*(average_length_of_queues.end()-1))->push_back(servers_time_queue_length[i] / simulation_time_s);
+        average_length_of_queues.back()->push_back(servers_time_queue_length[i] / simulation_time_s);
         VLOG(1) << "The average length of server " << i+1 << " queue was: " << servers_time_queue_length[i] / simulation_time_s;
+        VLOG(1) << "Server util size: " << average_server_utilizations.back()->size();
     }
     VLOG(1) << "Total time spent in the queue: " << total_queue_time;
     VLOG(1) << "Total departures: " << total_departures;
@@ -251,8 +256,10 @@ int main(int argc, char **argv) {
     FLAGS_logtostderr = 1;
 
     int seed = time(0);
-    double distribution_mean = 3.0;
-    variate_generator< mt19937, exponential_distribution<> > rand_generator(mt19937(seed), exponential_distribution<>(1/distribution_mean));
+    double arrival_mean = 1.0;
+    double departure_mean = 4.5;
+    variate_generator< mt19937, exponential_distribution<> > arrival_generator(mt19937(seed), exponential_distribution<>(1/arrival_mean));
+    variate_generator< mt19937, exponential_distribution<> > departure_generator(mt19937(seed+1), exponential_distribution<>(1/departure_mean));
 
     // Intiate
     int duration = 480;
@@ -265,8 +272,8 @@ int main(int argc, char **argv) {
     filename << "servers_stats" << ".dat";
     outfile.open(filename.str());
 
-    for (int i = min_servers; i <= max_servers; i++) {
-        int num_servers = i;
+    for (int sev = min_servers; sev <= max_servers; sev++) {
+        int num_servers = sev;
         for (int j = 0; j < num_iterations; j++) {
             closed = false;
             servers_idle.clear();
@@ -275,7 +282,7 @@ int main(int argc, char **argv) {
                 servers_idle.push_back(true);
                 servers_queue.push_back(new std::queue<double>());
             }
-            run_simulation(duration, rand_generator);
+            run_simulation(duration, arrival_generator, departure_generator);
         }
 
         for (int j = 0; j < num_servers; j++) {
@@ -298,46 +305,78 @@ int main(int argc, char **argv) {
         double sqr_times_after_close = std::inner_product(times_after_close.begin(), times_after_close.end(), times_after_close.begin(), 0.0);
         double std_times_after_close = std::sqrt(sqr_times_after_close / times_after_close.size() - avg_times_after_close * avg_times_after_close);
 
+        double min_server_utilization = std::numeric_limits<double>::max();
+        double max_server_utilization = std::numeric_limits<double>::min();
+        double sum_server_utilization = 0;
+        double sqr_server_utilization = 0;
+
+        double min_average_length = std::numeric_limits<double>::max();
+        double max_average_length = std::numeric_limits<double>::min();
+        double sum_average_length = 0;
+        double sqr_average_length = 0;
+
+        for (int i = 0; i < num_iterations; i++) {
+            double temp_avg_server_utilization = 0;
+            double temp_avg_average_length = 0;
+
+            // Find the average server utilization of the queues;
+            for (int j = 0; j < num_servers; j++) {
+                double current_utilization = average_server_utilizations.at(i)->at(j);
+                VLOG(2) << "Server " << j+1 << " utilization: " << current_utilization;
+                temp_avg_server_utilization += current_utilization;
+
+                double current_average_length = average_length_of_queues.at(i)->at(j);
+                VLOG(2) << "Server " << j+1 << " average length: " << current_average_length;
+                temp_avg_average_length += current_average_length;
+                temp_avg_average_length = temp_avg_average_length / num_servers;
+            }
+            delete average_server_utilizations.at(i);
+            delete average_length_of_queues.at(i);
+
+            temp_avg_server_utilization = temp_avg_server_utilization / num_servers;
+            sum_server_utilization += temp_avg_server_utilization;
+            if (temp_avg_server_utilization > max_server_utilization) max_server_utilization = temp_avg_server_utilization;
+            if (temp_avg_server_utilization < min_server_utilization) min_server_utilization = temp_avg_server_utilization;
+            sqr_server_utilization += temp_avg_server_utilization * temp_avg_server_utilization;
+
+            temp_avg_average_length = temp_avg_average_length / num_servers;
+            sum_average_length += temp_avg_average_length;
+            if (temp_avg_average_length > max_average_length) max_average_length = temp_avg_average_length;
+            if (temp_avg_average_length < min_average_length) min_average_length = temp_avg_average_length;
+            sqr_average_length += temp_avg_average_length * temp_avg_average_length;
+        }
+        average_server_utilizations.clear();
+        average_length_of_queues.clear();
+
+        double avg_server_utilization = sum_server_utilization / num_iterations;
+        double std_server_utilization = std::sqrt(sqr_server_utilization / num_iterations - avg_server_utilization * avg_server_utilization);
+
+        double avg_average_length = sum_average_length / (num_servers * num_iterations);
+        double std_average_length = std::sqrt(sqr_average_length / (num_servers * num_iterations) - avg_average_length * avg_average_length);
+
+
         outfile << "------------------------------------------" << std::endl;
         outfile << "---------------- " << num_servers << " SERVERS" << " ---------------" << std::endl;
         outfile << "------------------------------------------" << std::endl;
         outfile << std::endl;
 
-        for (int j = 0; j < num_servers; j++) {
-            double min_server_utilization = std::numeric_limits<double>::max();
-            double max_server_utilization = std::numeric_limits<double>::min();
-            double sum_server_utilization = 0;
-            double min_average_length = std::numeric_limits<double>::max();
-            double max_average_length = std::numeric_limits<double>::min();
-            double sum_average_length = 0;
-            for (int i = 0; i < num_iterations; i++) {
-                double current_utilization = (*average_server_utilizations[i])[j];
-                sum_server_utilization += current_utilization;
-                if (current_utilization > max_server_utilization) max_server_utilization = current_utilization;
-                if (current_utilization < min_server_utilization) min_server_utilization = current_utilization;
+        outfile << "-----------------------------------------" << std::endl;
+        outfile << "------- AVERAGE SERVER UTILIZATION ------" << std::endl;
+        outfile << "-----------------------------------------" << std::endl;
+        outfile << "Min server utiliation: " << min_server_utilization << std::endl;
+        outfile << "Max server utiliation: " << max_server_utilization << std::endl;
+        outfile << "Average server utilization: " << avg_server_utilization << std::endl;
+        outfile << "Standard deviation of server utilization: " << std_server_utilization << std::endl;
+        outfile << std::endl;
 
-                double current_average_length = (*average_length_of_queues[i])[j];
-                sum_average_length += current_average_length;
-                if (current_average_length > max_average_length) max_average_length = current_average_length;
-                if (current_average_length < min_average_length) min_average_length = current_average_length;
-            }
-            outfile << "-----------------------------------------" << std::endl;
-            outfile << "- AVERAGE SERVER UTILIZATION - SERVER " << j+1 << " -" << std::endl;
-            outfile << "-----------------------------------------" << std::endl;
-            outfile << "Min server utiliation for server " << j+1 << ": " << min_server_utilization << std::endl;
-            outfile << "Max server utiliation for server " << j+1 << ": " << max_server_utilization << std::endl;
-            outfile << "Average server utilization for server " << j+1 << ": " << sum_server_utilization / num_iterations << std::endl;
-            outfile << std::endl;
-
-            outfile << "-----------------------------------------" << std::endl;
-            outfile << "---- AVERAGE QUEUE LENGTH - SERVER " << j+1 << " ----" << std::endl;
-            outfile << "-----------------------------------------" << std::endl;
-            outfile << "Min queue length for server " << j+1 << ": " << min_average_length << std::endl;
-            outfile << "Max queue length for server " << j+1 << ": " << max_average_length << std::endl;
-            outfile << "Average queue length for server " << j+1 << ": " << sum_average_length / num_iterations << std::endl;
-            outfile << std::endl;
-            outfile << std::endl;
-        }
+        outfile << "-----------------------------------------" << std::endl;
+        outfile << "---------- AVERAGE QUEUE LENGTH ---------" << std::endl;
+        outfile << "-----------------------------------------" << std::endl;
+        outfile << "Min queue length: " << min_average_length << std::endl;
+        outfile << "Max queue length: " << max_average_length << std::endl;
+        outfile << "Average queue length: " << avg_average_length << std::endl;
+        outfile << "Standard deviation of queue length: " << std_average_length << std::endl;
+        outfile << std::endl;
 
         outfile << "-----------------------------------------" << std::endl;
         outfile << "---------- AVERAGE QUEUE TIMES ----------" << std::endl;
@@ -355,7 +394,6 @@ int main(int argc, char **argv) {
         outfile << "Max of times after close: " << max_times_after_close << std::endl;
         outfile << "Mean of times after close: " << avg_times_after_close << std::endl;
         outfile << "Standard deviation of times after close: " << std_times_after_close << std::endl;
-        outfile << std::endl;
         outfile << std::endl;
         outfile << std::endl;
         outfile << std::endl;
