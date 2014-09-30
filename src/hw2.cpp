@@ -283,10 +283,10 @@ int main(int argc, char **argv) {
                 servers_queue.push_back(new std::queue<double>());
             }
             run_simulation(duration, arrival_generator, departure_generator);
-        }
 
-        for (int j = 0; j < num_servers; j++) {
-            delete servers_queue[j];
+            for (int j = 0; j < num_servers; j++) {
+                delete servers_queue[j];
+            }
         }
 
         // Collect and print statistics.
