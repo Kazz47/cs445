@@ -7,7 +7,7 @@
 #include <boost/random.hpp>
 #include <boost/generator_iterator.hpp>
 
-#include <glog/logging.h>
+//#include <glog/logging.h>
 
 using boost::variate_generator;
 using boost::mt19937;
@@ -148,15 +148,15 @@ void run_simulation(
     heap.push(new Event(simulation_time_s + arrival_generator(), 0));
     heap.push(new Event(close_time, 2));
 
-    VLOG(2) << "Start Simulation...";
+    //VLOG(2) << "Start Simulation...";
 
     while (!heap.empty()) {
         Event *current_event = heap.top();
         heap.pop();
 
         if (current_event == NULL) {
-            LOG(ERROR) << "Simulation not complete and there are no events in the min heap.";
-            LOG(ERROR) << "\tsimulation time: " << simulation_time_s;
+            std::cerr << "Simulation not complete and there are no events in the min heap." << std::endl;
+            std::cerr << "\tsimulation time: " << simulation_time_s << std::endl;
             exit(0);
         }
 
@@ -175,11 +175,11 @@ void run_simulation(
             case 0: // ARRIVE
                 // If the server is busy add new arrival to waiting queue
                 // otherwise set the server as busy and add new departure time.
-                VLOG(2) << "Arrival Begin";
+                //VLOG(2) << "Arrival Begin";
                 if (!server_idle(idle_index)) {
                     addToQueue(simulation_time_s);
                 } else {
-                    VLOG(2) << "Idle Index: " << idle_index;
+                    //VLOG(2) << "Idle Index: " << idle_index;
                     servers_idle[idle_index] = false;
                     heap.push(new Event(simulation_time_s + departure_generator(), simulation_time_s, idle_index, 1));
                 }
@@ -187,7 +187,7 @@ void run_simulation(
                     // Add next arrival event
                     heap.push(new Event(simulation_time_s + arrival_generator(), 0));
                 }
-                VLOG(2) << "Arrival End";
+                //VLOG(2) << "Arrival End";
                 break;
             case 1: // DEPART
                 // Add server busy time.
@@ -197,7 +197,7 @@ void run_simulation(
                 // If the queue is empty set the server to idle otherwise
                 // get the next person from the queue and set their departure
                 // time.
-                VLOG(2) << "Depart Begin";
+                //VLOG(2) << "Depart Begin";
                 if (servers_queue[current_event->server_index]->empty()) {
                     servers_idle[current_event->server_index] = true;
                 } else {
@@ -209,51 +209,51 @@ void run_simulation(
                     heap.push(new Event(simulation_time_s + departure_generator(), simulation_time_s, current_event->server_index, 1));
                 }
                 total_departures++;
-                VLOG(2) << "Depart End";
+                //VLOG(2) << "Depart End";
                 break;
             case 2: // CLOSE
                 // Set flag to stop arrivals
-                VLOG(2) << "Closed";
+                //VLOG(2) << "Closed";
                 closed = true;
                 break;
             default:
-                LOG(ERROR) << "Simulation had an event with an unknown type: " << current_event->type;
-                LOG(ERROR) << "\tsimulation time: " << simulation_time_s;
+                std::cerr << "Simulation had an event with an unknown type: " << current_event->type << std::endl;
+                std::cerr << "\tsimulation time: " << simulation_time_s << std::endl;
                 exit(0);
         }
 
-        VLOG(3) << *current_event << ", h: " << heap.size();
+        //VLOG(3) << *current_event << ", h: " << heap.size();
 
         delete current_event; // Event's are created with new, so we need to delete them when we're done with them
     }
 
     assert(heap.empty());
 
-    VLOG(1) << "The simulation ended at time: " << simulation_time_s;
+    //VLOG(1) << "The simulation ended at time: " << simulation_time_s;
     times_after_close.push_back(simulation_time_s - close_time);
-    VLOG(1) << "The simulation ended " << simulation_time_s - close_time << " after close.";
+    //VLOG(1) << "The simulation ended " << simulation_time_s - close_time << " after close.";
     average_server_utilizations.push_back(new std::vector<double>());
     average_length_of_queues.push_back(new std::vector<double>());
-    VLOG(1) << "Server util vector size: " << average_server_utilizations.size();
+    //VLOG(1) << "Server util vector size: " << average_server_utilizations.size();
     for (int i = 0; i < servers_idle.size(); i++) {
-        VLOG(1) << "The server " << i+1 << " was busy for time: " << servers_work_time[i];
+        //VLOG(1) << "The server " << i+1 << " was busy for time: " << servers_work_time[i];
         average_server_utilizations.back()->push_back(servers_work_time[i] / simulation_time_s);
-        VLOG(1) << "The server " << i+1 << " utilization was: " << servers_work_time[i] / simulation_time_s;
+        //VLOG(1) << "The server " << i+1 << " utilization was: " << servers_work_time[i] / simulation_time_s;
         average_length_of_queues.back()->push_back(servers_time_queue_length[i] / simulation_time_s);
-        VLOG(1) << "The average length of server " << i+1 << " queue was: " << servers_time_queue_length[i] / simulation_time_s;
-        VLOG(1) << "Server util size: " << average_server_utilizations.back()->size();
+        //VLOG(1) << "The average length of server " << i+1 << " queue was: " << servers_time_queue_length[i] / simulation_time_s;
+        //VLOG(1) << "Server util size: " << average_server_utilizations.back()->size();
     }
-    VLOG(1) << "Total time spent in the queue: " << total_queue_time;
-    VLOG(1) << "Total departures: " << total_departures;
+    //VLOG(1) << "Total time spent in the queue: " << total_queue_time;
+    //VLOG(1) << "Total departures: " << total_departures;
     average_times_in_queue.push_back(total_queue_time / total_departures);
-    VLOG(1) << "The average time spent in queue: " << total_queue_time / total_departures;
+    //VLOG(1) << "The average time spent in queue: " << total_queue_time / total_departures;
 }
 
 int main(int argc, char **argv) {
     // Initialize Google Logging
-    google::InitGoogleLogging(argv[0]);
+    //google::InitGoogleLogging(argv[0]);
     // Log to Stderr
-    FLAGS_logtostderr = 1;
+    //FLAGS_logtostderr = 1;
 
     int seed = time(0);
     double arrival_mean = 1.0;
@@ -283,10 +283,10 @@ int main(int argc, char **argv) {
                 servers_queue.push_back(new std::queue<double>());
             }
             run_simulation(duration, arrival_generator, departure_generator);
-        }
 
-        for (int j = 0; j < num_servers; j++) {
-            delete servers_queue[j];
+            for (int j = 0; j < num_servers; j++) {
+                delete servers_queue[j];
+            }
         }
 
         // Collect and print statistics.
@@ -322,11 +322,11 @@ int main(int argc, char **argv) {
             // Find the average server utilization of the queues;
             for (int j = 0; j < num_servers; j++) {
                 double current_utilization = average_server_utilizations.at(i)->at(j);
-                VLOG(2) << "Server " << j+1 << " utilization: " << current_utilization;
+                //VLOG(2) << "Server " << j+1 << " utilization: " << current_utilization;
                 temp_avg_server_utilization += current_utilization;
 
                 double current_average_length = average_length_of_queues.at(i)->at(j);
-                VLOG(2) << "Server " << j+1 << " average length: " << current_average_length;
+                //VLOG(2) << "Server " << j+1 << " average length: " << current_average_length;
                 temp_avg_average_length += current_average_length;
                 temp_avg_average_length = temp_avg_average_length / num_servers;
             }
