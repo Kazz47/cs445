@@ -19,9 +19,11 @@ set(CMAKE_MODULE_PATH
     "${PROJECT_SOURCE_DIR}/cmake_modules/"
 )
 
-# Setup Boost
-find_package(Boost REQUIRED COMPONENTS system)
+# Setup Stuff
 find_package(Glog REQUIRED)
+find_package(Boost REQUIRED COMPONENTS system)
+find_package(OpenGL REQUIRED)
+find_package(GLUT REQUIRED)
 
 # Build Settings
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++0x -fPIC")
