@@ -22,7 +22,9 @@
 
 #include <boost/random.hpp>
 #include <boost/generator_iterator.hpp>
-#include <boost/thread.hpp>
+
+#include <thread>
+#include <mutex>
 
 
 using std::cerr;
@@ -35,21 +37,27 @@ using boost::exponential_distribution;
 using boost::gamma_distribution;
 using boost::uniform_real;
 
-using boost::thread;
-
 unsigned int window_width, window_height;
 int window_size;
 int num_active_pixels;
+int num_threads;
 
-#define NUMBER_DROPLETS 50
+//#define FAST
+//#define THREADING
+//#define NUMBER_DROPLETS 50
 
-int droplet_x[NUMBER_DROPLETS];
-int droplet_y[NUMBER_DROPLETS];
+bool pixel_frozen = false;
 
 float *pixels;
 
 size_t *active_pixels;
 bool *frozen_pixels;
+
+#ifdef THREADING
+std::vector<std::thread*> threads;
+std::mutex rng_mtx;
+std::mutex freeze_mtx;
+#endif
 
 variate_generator<mt19937, uniform_real<> > random_0_1( mt19937(time(0)), uniform_real<>(0.0, 1.0));
 
@@ -110,16 +118,39 @@ bool is_adjacent(int x, int y) {
 void set_start_pos(size_t *x, size_t *y) {
     size_t x_val = 0;
     size_t y_val = 0;
-    if (random_0_1() < static_cast<double>(window_width)/(window_width + window_height)) {
+
+#ifdef THREADING
+    rng_mtx.lock();
+#endif
+    double rand = random_0_1();
+#ifdef THREADING
+    rng_mtx.unlock();
+#endif
+
+    if (rand < static_cast<double>(window_width)/(window_width + window_height)) {
+#ifdef THREADING
+        rng_mtx.lock();
+#endif
         x_val = random_0_1() * window_width;
-        if (random_0_1() < 0.5) {
+        rand = random_0_1();
+#ifdef THREADING
+        rng_mtx.unlock();
+#endif
+        if (rand < 0.5) {
             y_val = 0;
         } else {
             y_val = window_height - 1;
         }
     } else {
+#ifdef THREADING
+        rng_mtx.lock();
+#endif
         y_val = random_0_1() * window_height;
-        if (random_0_1() < 0.5) {
+        rand = random_0_1();
+#ifdef THREADING
+        rng_mtx.unlock();
+#endif
+        if (rand < 0.5) {
             x_val = 0;
         } else {
             x_val = window_width - 1;
@@ -129,53 +160,81 @@ void set_start_pos(size_t *x, size_t *y) {
     *y = y_val;
 }
 
+/**
+ * This moves every pixel in one of four directions and check if it is next to
+ * a frozen pixel
+ */
+void move_pixels(size_t start, size_t end) {
+#ifdef THREADING
+    while(true) {
+#endif
+        for (int i = start; i < end; i++) {
+#ifdef THREADING
+            rng_mtx.lock();
+#endif
+            double rand_val = random_0_1();
+#ifdef THREADING
+            rng_mtx.unlock();
+#endif
+            int x_pos = i*2;
+            int y_pos = i*2 + 1;
+            unset_pixel(active_pixels[x_pos], active_pixels[y_pos]);
+            if (rand_val < 0.25) { // Move up
+                if (active_pixels[x_pos] < window_width - 1) {
+                    active_pixels[x_pos] += 1;
+                } else {
+                    active_pixels[x_pos] -= 1;
+                }
+            } else if (rand_val < 0.50) { // Move down
+                if (active_pixels[x_pos] > 0) {
+                    active_pixels[x_pos] -= 1;
+                } else {
+                    active_pixels[x_pos] += 1;
+                }
+            } else if (rand_val < 0.75) { // Move left
+                if (active_pixels[y_pos] < window_height - 1) {
+                    active_pixels[y_pos] += 1;
+                } else {
+                    active_pixels[y_pos] -= 1;
+                }
+            } else { // Move right
+                if (active_pixels[y_pos] > 0) {
+                    active_pixels[y_pos] -= 1;
+                } else {
+                    active_pixels[y_pos] += 1;
+                }
+            }
+            set_pixel(active_pixels[x_pos], active_pixels[y_pos]);
+#ifdef THREADING
+            freeze_mtx.lock();
+#endif
+            if (is_adjacent(active_pixels[x_pos], active_pixels[y_pos])) {
+                set_frozen(active_pixels[x_pos], active_pixels[y_pos]);
+                set_start_pos(&active_pixels[x_pos], &active_pixels[y_pos]);
+                pixel_frozen = true;
+            }
+#ifdef THREADING
+            freeze_mtx.unlock();
+#endif
+        }
+#ifdef THREADING
+    }
+#endif
+}
+
 void idle() {
-    bool item_froze = false;
+#ifndef THREADING
+    move_pixels(0, num_active_pixels);
+#endif
 
-    //Move all active pixels
-    for (int i = 0; i < num_active_pixels; i++) {
-        double rand_val = random_0_1();
-        int x_pos = i*2;
-        int y_pos = i*2 + 1;
-        unset_pixel(active_pixels[x_pos], active_pixels[y_pos]);
-        if (rand_val < 0.25) { // Move up
-            if (active_pixels[x_pos] < window_width - 1) {
-                active_pixels[x_pos] += 1;
-            } else {
-                active_pixels[x_pos] -= 1;
-            }
-        } else if (rand_val < 0.50) { // Move down
-            if (active_pixels[x_pos] > 0) {
-                active_pixels[x_pos] -= 1;
-            } else {
-                active_pixels[x_pos] += 1;
-            }
-        } else if (rand_val < 0.75) { // Move left
-            if (active_pixels[y_pos] < window_height - 1) {
-                active_pixels[y_pos] += 1;
-            } else {
-                active_pixels[y_pos] -= 1;
-            }
-        } else { // Move right
-            if (active_pixels[y_pos] > 0) {
-                active_pixels[y_pos] -= 1;
-            } else {
-                active_pixels[y_pos] += 1;
-            }
-        }
-        set_pixel(active_pixels[x_pos], active_pixels[y_pos]);
-        if (is_adjacent(active_pixels[x_pos], active_pixels[y_pos])) {
-            set_frozen(active_pixels[x_pos], active_pixels[y_pos]);
-            set_start_pos(&active_pixels[x_pos], &active_pixels[y_pos]);
-
-            item_froze = true;
-        }
-    }
-
-    // Only re-draw if a droplet froze.
-    if (item_froze) {
+#ifdef FAST
+    if (pixel_frozen) {
+#endif
         glutPostRedisplay();
+        pixel_frozen = false;
+#ifdef FAST
     }
+#endif
 }
 
 void display() {
@@ -205,6 +264,14 @@ int main(int argc, char** argv) {
     window_size = window_width * window_height;
 
     num_active_pixels = atoi(argv[3]);
+#ifdef THREADING
+    num_threads = std::thread::hardware_concurrency() - 1; // Save one for the main loop
+
+    if (num_active_pixels < num_threads) {
+        num_threads = num_active_pixels;
+    }
+    num_threads = 1;
+#endif
 
     /**
      *  Initialize the pixel matrix
@@ -232,6 +299,9 @@ int main(int argc, char** argv) {
     cout << "window height: "   << window_height << endl;
     cout << "window size : "    << window_size << endl;
     cout << "active pixels: "   << num_active_pixels << endl;
+#ifdef THREADING
+    cout << "num threads: "     << num_threads << " (plus one for main loop)" << endl;
+#endif
 
     glutInit(&argc, argv);
 
@@ -249,6 +319,13 @@ int main(int argc, char** argv) {
     glEnable(GL_DEPTH_TEST);
     glClearColor(0.0, 0.0, 0.0, 1.0);
     //glPointSize(2);
+
+    //Start threads to move pixels
+#ifdef THREADING
+    for (int i = 0; i < num_threads; i++) {
+        threads.push_back(new std::thread(move_pixels, num_active_pixels*(i/num_threads), num_active_pixels*((i+1)/num_threads)));
+    }
+#endif
 
     glutMainLoop();
 }
