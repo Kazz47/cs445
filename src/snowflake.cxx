@@ -42,7 +42,7 @@ int window_size;
 int num_active_pixels;
 int num_threads;
 
-//#define FAST
+#define FAST
 //#define THREADING
 //#define NUMBER_DROPLETS 50
 
