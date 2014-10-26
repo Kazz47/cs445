@@ -3,7 +3,9 @@
 #include <queue>
 #include <string>
 #include <limits>
+#include <cmath>
 
+#include <boost/algorithm/string.hpp>
 #include <boost/random.hpp>
 #include <boost/generator_iterator.hpp>
 
@@ -11,20 +13,18 @@
 
 using boost::variate_generator;
 using boost::mt19937;
-using boost::exponential_distribution;
+using boost::lognormal_distribution;
 
 #define ONLY_EVENT_TYPE     0
 #define NUMBER_EVENT_TYPES  3   //NEED TO MAKE SURE THIS IS 1 MORE THAN THE LAST DEFINED EVENT
 
 const std::string event_names[NUMBER_EVENT_TYPES] = {
-    "ARRIVE",
-    "DEPART",
-    "CLOSE"
+    "REQUEST_JOB",
+    "RETURN_SUCCESS",
+    "RETURN_ERROR"
 };
 
-bool closed = false;
-
-std::vector<bool> servers_idle;
+std::vector<bool> job_queue;
 std::vector< std::queue<double>* > servers_queue;
 
 // Stats vectors
@@ -43,16 +43,9 @@ std::ofstream outfile;
 class Event {
     public:
         const double time;
-        const double server_start_time;
-        const int server_index;
         const int type;
 
-        Event(double time, int type) : time(time), server_start_time(0), server_index(-1), type(type) {
-            //cout << "created an event with simulation time: " << this->time << endl;
-            //cout << "created an event with event type: " << this->type << endl;
-        }
-
-        Event(double time, double server_start_time, int server_index, int type) : time(time), server_start_time(server_start_time), server_index(server_index), type(type) {
+        Event(double time, int type) : time(time), type(type) {
             //cout << "created an event with simulation time: " << this->time << endl;
             //cout << "created an event with event type: " << this->type << endl;
         }
@@ -76,7 +69,6 @@ class CompareEvent {
     public:
         bool operator()(Event* &e1, Event* &e2) {
             return e1->time > e2->time;
-            //return false;
         }
 };
 
@@ -92,80 +84,125 @@ std::ostream& operator<< ( std::ostream& out, Event& event) {
     return out;
 }
 
-void parseFile(const std::string &file_name, std::vector<unsigned int> &start_times, std::vector<unsigned int> &end_times, std::vector<float> &cpu_times, std::vector<unsigned int> &result_flags, std::vector<std::string> &wu_names) {
+void parseFile(const std::string &file_name, std::vector<float> &means, std::vector<float> &stdevs, std::vector<float> &errors) {
+    LOG(INFO) << "Load file: '" << file_name << "'";
     std::ifstream infile(file_name);
-    unsigned int start_time, end_time, result_flag;
-    float cpu_time;
-    std::string wu_name;
+
+    std::vector<unsigned long> start_times, end_times, result_flags, wu_names;
+    std::vector<float> cpu_times;
+
+    std::string start_time, end_time, result_flag, cpu_time, wu_name;
 
     std::string line;
+    std::string temp;
     while (std::getline(infile, line)) {
         std::istringstream iss(line);
         if (!(iss >> start_time >> end_time >> cpu_time >> result_flag >> wu_name)) {
             break;
         }
-        start_times.push_back(start_time);
-        end_times.push_back(end_time);
-        cpu_times.push_back(cpu_time);
-        result_flags.push_back(result_flag);
-        wu_names.push_back(wu_name);
-    }
-}
+        start_time.pop_back();
+        VLOG(1) << "START_TIME: " << start_time;
+        end_time.pop_back();
+        VLOG(1) << "END_TIME: " << end_time;
+        cpu_time.pop_back();
+        VLOG(1) << "CPU_TIME: " << cpu_time;
+        result_flag.pop_back();
+        VLOG(1) << "RESULT_FLAG: " << result_flag;
+        start_times.push_back(atoi(start_time.c_str()));
+        end_times.push_back(atoi(end_time.c_str()));
+        cpu_times.push_back(atof(cpu_time.c_str()));
+        result_flags.push_back(atoi(result_flag.c_str()));
 
-bool server_idle(int &idle_index) {
-    for (int i = 0; i < servers_idle.size(); i++) {
-        if (servers_idle[i] == true) {
-            idle_index = i;
-            return true;
+        // Order by names with more zeros.
+        if (wu_name.find("gibbs_test_hg19_1000") == 0) {
+            wu_names.push_back(1000);
+        } else if (wu_name.find("gibbs_test_hg19_100") == 0) {
+            wu_names.push_back(100);
+        } else if (wu_name.find("gibbs_test_hg19_10") == 0) {
+            wu_names.push_back(10);
+        } else {
+            LOG(ERROR) << "No matching name: '" << wu_name << "'";
+            wu_names.push_back(0);
         }
     }
-    return false;
-}
+    infile.close();
 
-void addToQueue(double enqueue_time) {
-    std::queue<double> *shortest = NULL;
-    for (int i = 0; i < servers_queue.size(); i++) {
-        if (shortest == NULL || servers_queue[i]->size() < shortest->size()) {
-            shortest = servers_queue[i];
+    unsigned long sum[3] = {0, 0, 0};
+    unsigned long size[3] = {0, 0, 0};
+    unsigned long size_errors[3] = {0, 0, 0};
+    for (size_t i = 0; i < wu_names.size(); i++) {
+        long duration = end_times[i] - start_times[i];
+        if (wu_names[i] == 1000) {
+            if (result_flags[i] == 1) {
+                LOG_IF(ERROR, duration <= 0) << "Invalid duration: " << duration;
+                sum[0] += duration;
+                size[0]++;
+            } else {
+                size_errors[0]++;
+            }
+        } else if(wu_names[i] == 100) {
+            if (result_flags[i] == 1) {
+                LOG_IF(ERROR, duration <= 0) << "Invalid duration: " << duration;
+                sum[1] += duration;
+                size[1]++;
+            } else {
+                size_errors[1]++;
+            }
+        } else if(wu_names[i] == 10) {
+            if (result_flags[i] == 1) {
+                LOG_IF(ERROR, duration <= 0) << "Invalid duration: " << duration;
+                sum[2] += duration;
+                size[2]++;
+            } else {
+                size_errors[2]++;
+            }
         }
     }
-    shortest->push(enqueue_time);
-}
 
-void jockey(const int &departed_queue) {
-    for (int i = 1; i < servers_queue.size(); i++) {
-        int pos = departed_queue - i;
-        if (pos < 0) pos = servers_queue.size() + pos;
-        if (servers_queue[departed_queue]->size() < servers_queue[pos]->size()) {
-            servers_queue[departed_queue]->push(servers_queue[pos]->front());
-            servers_queue[pos]->pop();
+    for (size_t i = 0; i < 3; i++) {
+        means.push_back(static_cast<float>(sum[i])/size[i]);
+        errors.push_back(static_cast<float>(size_errors[i])/(size_errors[i] + size[i]));
+    }
+
+    unsigned long stdev_sum[3] = {0, 0, 0};
+    for (size_t i = 0; i < wu_names.size(); i++) {
+        if (result_flags[i] == 1) {
+            int duration = end_times[i] - start_times[i];
+            LOG_IF(ERROR, duration <= 0) << "Invalid duration: " << duration;
+            if (wu_names[i] == 1000) {
+                stdev_sum[0] += (duration - means[0]) * (duration - means[0]);
+            } else if(wu_names[i] == 100) {
+                stdev_sum[1] += (duration - means[1]) * (duration - means[1]);
+            } else if(wu_names[i] == 10) {
+                stdev_sum[2] += (duration - means[2]) * (duration - means[2]);
+            }
         }
+    }
+
+    for (size_t i = 0; i < 3; i++) {
+        stdevs.push_back(sqrt(static_cast<float>(stdev_sum[i])/size[i]));
     }
 }
 
 void run_simulation(
-        const double close_time,
-        variate_generator< mt19937, exponential_distribution<> > &arrival_generator,
-        variate_generator< mt19937, exponential_distribution<> > &departure_generator) {
+        variate_generator< mt19937, lognormal_distribution<> > &duration_generator,
+        variate_generator< mt19937, std::uniform_real_distribution<> > &error_generator) {
     double simulation_time_s = 0;
     double previous_time_s = 0;
 
-    std::vector<double> servers_work_time;
-    std::vector<double> servers_time_queue_length;
+    //std::vector<double> servers_work_time;
+    //std::vector<double> servers_time_queue_length;
+    /*
     for (int i = 0; i < servers_idle.size(); i++) {
         servers_work_time.push_back(0);
         servers_time_queue_length.push_back(0);
     }
-
-    double total_queue_time = 0;
-    double total_departures = 0;
-
+    */
 
     std::priority_queue<Event*, std::vector<Event*>, CompareEvent> heap;
 
     // Put initial event in the heap
-    heap.push(new Event(simulation_time_s + arrival_generator(), 0));
-    heap.push(new Event(close_time, 2));
+    heap.push(new Event(simulation_time_s + duration_generator(), 0));
 
     VLOG(2) << "Start Simulation...";
 
@@ -184,56 +221,35 @@ void run_simulation(
 
         // Calculate average time stuff
         double time_since_last = simulation_time_s - previous_time_s;
-        // Calculate sum of time queue length for all servers
-        for (int i = 0; i < servers_idle.size(); i++) {
-            servers_time_queue_length[i] += servers_queue[i]->size() * time_since_last;
-        }
 
-        int idle_index = -1;
         switch (current_event->type) {
-            case 0: // ARRIVE
-                // If the server is busy add new arrival to waiting queue
-                // otherwise set the server as busy and add new departure time.
-                VLOG(2) << "Arrival Begin";
-                if (!server_idle(idle_index)) {
-                    addToQueue(simulation_time_s);
-                } else {
-                    VLOG(2) << "Idle Index: " << idle_index;
-                    servers_idle[idle_index] = false;
-                    heap.push(new Event(simulation_time_s + departure_generator(), simulation_time_s, idle_index, 1));
+            case 0: // REQUESET_JOB
+                // If there is a job push a new event for either success or
+                // error. If there is no job in the queue then push another job
+                // request onto the queue.
+                VLOG(2) << "Request Job Begin";
+                if (!job_queue.empty()) {
+                    // Add another request event
+                    heap.push(new Event(simulation_time_s + error_generator(), 0));
                 }
-                if (!closed) {
-                    // Add next arrival event
-                    heap.push(new Event(simulation_time_s + arrival_generator(), 0));
-                }
-                VLOG(2) << "Arrival End";
+                VLOG(2) << "Request Job End";
                 break;
-            case 1: // DEPART
-                // Add server busy time.
-                // Which server is busy?
-                servers_work_time[current_event->server_index] += simulation_time_s - current_event->server_start_time;
-                jockey(current_event->server_index);
-                // If the queue is empty set the server to idle otherwise
-                // get the next person from the queue and set their departure
-                // time.
-                VLOG(2) << "Depart Begin";
-                if (servers_queue[current_event->server_index]->empty()) {
-                    servers_idle[current_event->server_index] = true;
-                } else {
-                    // Add current simulation time minus time stored in the
-                    // queue to the total queue time.
-                    total_queue_time += simulation_time_s - servers_queue[current_event->server_index]->front();
-                    servers_queue[current_event->server_index]->pop();
-                    // Add a new depature to the heap.
-                    heap.push(new Event(simulation_time_s + departure_generator(), simulation_time_s, current_event->server_index, 1));
-                }
-                total_departures++;
-                VLOG(2) << "Depart End";
+            case 1: // RETURN_SUCCESS
+                // Server checks if there the quarum for this sample is
+                // complete if it is then create jobs for the next sample in
+                // the walk. If there are jobs available create a new success
+                // or error event otherwise a new request event.
+                VLOG(2) << "Success Begin";
+                heap.push(new Event(simulation_time_s + duration_generator(), simulation_time_s));
+                VLOG(2) << "Success End";
                 break;
-            case 2: // CLOSE
-                // Set flag to stop arrivals
-                VLOG(2) << "Closed";
-                closed = true;
+            case 2: // RETURN_ERROR
+                // Server creates a new job for the errored sample. If there
+                // are available jobs create a success or error event. Otherwise create a
+                // request event.
+                VLOG(2) << "Error Begin";
+                // Do stuff here
+                VLOG(2) << "Error End";
                 break;
             default:
                 LOG(ERROR) << "Simulation had an event with an unknown type: " << current_event->type;
@@ -249,23 +265,6 @@ void run_simulation(
     assert(heap.empty());
 
     VLOG(1) << "The simulation ended at time: " << simulation_time_s;
-    times_after_close.push_back(simulation_time_s - close_time);
-    VLOG(1) << "The simulation ended " << simulation_time_s - close_time << " after close.";
-    average_server_utilizations.push_back(new std::vector<double>());
-    average_length_of_queues.push_back(new std::vector<double>());
-    VLOG(1) << "Server util vector size: " << average_server_utilizations.size();
-    for (int i = 0; i < servers_idle.size(); i++) {
-        VLOG(1) << "The server " << i+1 << " was busy for time: " << servers_work_time[i];
-        average_server_utilizations.back()->push_back(servers_work_time[i] / simulation_time_s);
-        VLOG(1) << "The server " << i+1 << " utilization was: " << servers_work_time[i] / simulation_time_s;
-        average_length_of_queues.back()->push_back(servers_time_queue_length[i] / simulation_time_s);
-        VLOG(1) << "The average length of server " << i+1 << " queue was: " << servers_time_queue_length[i] / simulation_time_s;
-        VLOG(1) << "Server util size: " << average_server_utilizations.back()->size();
-    }
-    VLOG(1) << "Total time spent in the queue: " << total_queue_time;
-    VLOG(1) << "Total departures: " << total_departures;
-    average_times_in_queue.push_back(total_queue_time / total_departures);
-    VLOG(1) << "The average time spent in queue: " << total_queue_time / total_departures;
 }
 
 int main(int argc, char **argv) {
@@ -274,42 +273,52 @@ int main(int argc, char **argv) {
     // Log to Stderr
     FLAGS_logtostderr = 1;
 
+    std::vector<float> means;
+    std::vector<float> stdevs;
+    std::vector<float> errors;
+    parseFile("../data/dna_workunit_transit.csv", means, stdevs, errors);
+
     int seed = time(0);
-    double arrival_mean = 1.0;
-    double departure_mean = 4.5;
-    variate_generator< mt19937, exponential_distribution<> > arrival_generator(mt19937(seed), exponential_distribution<>(1/arrival_mean));
-    variate_generator< mt19937, exponential_distribution<> > departure_generator(mt19937(seed+1), exponential_distribution<>(1/departure_mean));
+    variate_generator< mt19937, lognormal_distribution<> > duration_generator(mt19937(seed), lognormal_distribution<>(means[0], stdevs[0]));
+    variate_generator< mt19937, std::uniform_real_distribution<> > error_generator(mt19937(seed+1), std::uniform_real_distribution<>(0, 1));
+
+    for (size_t i = 0; i < 3; i++) {
+        LOG(INFO) << i << ":Mean:" << means[i];
+        LOG(INFO) << i << ":Stdevs:" << stdevs[i];
+        LOG(INFO) << i << ":Errors:" << errors[i];
+    }
 
     // Intiate
-    int duration = 480;
-    int min_servers = 4;
-    int max_servers = 7;
-    int num_iterations = 10;
+    size_t num_samples = 1;
+    size_t sample_size = 1;
+    size_t num_workers = 2;
+    size_t num_jobs_per_sample = 2;
+    size_t quorum = 2;
 
     // Open files
     std::stringstream filename;
     filename << "servers_stats" << ".dat";
     outfile.open(filename.str());
 
-    for (int sev = min_servers; sev <= max_servers; sev++) {
-        int num_servers = sev;
-        for (int j = 0; j < num_iterations; j++) {
-            closed = false;
-            servers_idle.clear();
-            servers_queue.clear();
-            for (int k = 0; k < num_servers; k++) {
-                servers_idle.push_back(true);
-                servers_queue.push_back(new std::queue<double>());
+    for (int i = 2; i < 3; i++) {
+        for (int j = 0; j < 1; j++) {
+            // Clear arrays.
+            //servers_idle.clear();
+            //servers_queue.clear();
+            for (int k = 0; k < num_workers; k++) {
+                //servers_idle.push_back(true);
+                //servers_queue.push_back(new std::queue<double>());
             }
-            run_simulation(duration, arrival_generator, departure_generator);
+            run_simulation(duration_generator, error_generator);
 
-            for (int j = 0; j < num_servers; j++) {
-                delete servers_queue[j];
+            for (int j = 0; j < num_workers; j++) {
+                //delete servers_queue[j];
             }
         }
 
         // Collect and print statistics.
 
+        /*
         double sum_average_queue_time = std::accumulate(average_times_in_queue.begin(), average_times_in_queue.end(), 0.0);
         double min_average_queue_time = *std::min_element(average_times_in_queue.begin(), average_times_in_queue.end());
         double max_average_queue_time = *std::max_element(average_times_in_queue.begin(), average_times_in_queue.end());
@@ -416,6 +425,7 @@ int main(int argc, char **argv) {
         outfile << std::endl;
         outfile << std::endl;
         outfile << std::endl;
+        */
 
     }
     outfile.close();
