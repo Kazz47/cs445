@@ -16,8 +16,11 @@ using boost::mt19937;
 using boost::lognormal_distribution;
 
 #define ONLY_EVENT_TYPE     0
-#define NUMBER_EVENT_TYPES  3   //NEED TO MAKE SURE THIS IS 1 MORE THAN THE LAST DEFINED EVENT
+#define NUMBER_EVENT_TYPES  3
 
+const static unsigned int REQUEST_JOB = 0;
+const static unsigned int RETURN_SUCCESS = 1;
+const static unsigned int RETURN_ERROR = 2;
 const std::string event_names[NUMBER_EVENT_TYPES] = {
     "REQUEST_JOB",
     "RETURN_SUCCESS",
@@ -44,8 +47,14 @@ class Event {
     public:
         const double time;
         const int type;
+        const int client;
 
-        Event(double time, int type) : time(time), type(type) {
+        Event(double time, int type) : time(time), type(type), client(-1) {
+            //cout << "created an event with simulation time: " << this->time << endl;
+            //cout << "created an event with event type: " << this->type << endl;
+        }
+
+        Event(double time, int type, int client_id) : time(time), type(type), client(client_id) {
             //cout << "created an event with simulation time: " << this->time << endl;
             //cout << "created an event with event type: " << this->type << endl;
         }
@@ -101,13 +110,13 @@ void parseFile(const std::string &file_name, std::vector<float> &means, std::vec
             break;
         }
         start_time.pop_back();
-        VLOG(1) << "START_TIME: " << start_time;
+        VLOG(3) << "START_TIME: " << start_time;
         end_time.pop_back();
-        VLOG(1) << "END_TIME: " << end_time;
+        VLOG(3) << "END_TIME: " << end_time;
         cpu_time.pop_back();
-        VLOG(1) << "CPU_TIME: " << cpu_time;
+        VLOG(3) << "CPU_TIME: " << cpu_time;
         result_flag.pop_back();
-        VLOG(1) << "RESULT_FLAG: " << result_flag;
+        VLOG(3) << "RESULT_FLAG: " << result_flag;
         start_times.push_back(atoi(start_time.c_str()));
         end_times.push_back(atoi(end_time.c_str()));
         cpu_times.push_back(atof(cpu_time.c_str()));
@@ -185,6 +194,12 @@ void parseFile(const std::string &file_name, std::vector<float> &means, std::vec
 }
 
 void run_simulation(
+        size_t num_samples,
+        size_t sample_size,
+        size_t num_workers,
+        size_t num_jobs_per_sample,
+        size_t quorum,
+        float error_percent,
         variate_generator< mt19937, lognormal_distribution<> > &duration_generator,
         variate_generator< mt19937, std::uniform_real_distribution<> > &error_generator) {
     double simulation_time_s = 0;
@@ -201,8 +216,24 @@ void run_simulation(
 
     std::priority_queue<Event*, std::vector<Event*>, CompareEvent> heap;
 
-    // Put initial event in the heap
-    heap.push(new Event(simulation_time_s + duration_generator(), 0));
+    std::vector<size_t> available_jobs;
+
+    size_t complete_samples = 0;
+    size_t complete_jobs_in_sample = 0;
+
+    std::vector<size_t*> job_queue;
+    for (int i = 0; i < num_samples; i++) {
+        size_t *temp = new size_t[sample_size];
+        for (int j = 0; j < sample_size; j++) {
+            temp[j] = 0;
+        }
+        job_queue.push_back(temp);
+    }
+
+    // Put initial events in the heap
+    for (int client_id = 0; client_id < num_workers; client_id++) {
+        heap.push(new Event(simulation_time_s + duration_generator(), REQUEST_JOB, client_id));
+    }
 
     VLOG(2) << "Start Simulation...";
 
@@ -230,7 +261,11 @@ void run_simulation(
                 VLOG(2) << "Request Job Begin";
                 if (!job_queue.empty()) {
                     // Add another request event
-                    heap.push(new Event(simulation_time_s + error_generator(), 0));
+                    if (error_generator() <= error_percent) {
+                        heap.push(new Event(simulation_time_s + 1, RETURN_ERROR)); //TODO Fix this to add a correct time size.
+                    } else {
+                        heap.push(new Event(simulation_time_s + duration_generator(), RETURN_SUCCESS));
+                    }
                 }
                 VLOG(2) << "Request Job End";
                 break;
@@ -309,7 +344,7 @@ int main(int argc, char **argv) {
                 //servers_idle.push_back(true);
                 //servers_queue.push_back(new std::queue<double>());
             }
-            run_simulation(duration_generator, error_generator);
+            run_simulation(num_samples, sample_size, num_workers, num_jobs_per_sample, quorum, errors[i], duration_generator, error_generator);
 
             for (int j = 0; j < num_workers; j++) {
                 //delete servers_queue[j];
