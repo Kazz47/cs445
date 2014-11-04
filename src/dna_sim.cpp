@@ -30,6 +30,8 @@ const std::string event_names[NUMBER_EVENT_TYPES] = {
 std::vector<bool> job_queue;
 std::vector< std::queue<double>* > servers_queue;
 
+size_t total_jobs = 0;
+size_t jobs_complete = 0;
 // Stats vectors
 std::vector<double> times_after_close;
 std::vector<double> average_times_in_queue;
@@ -53,15 +55,17 @@ class Job {
         void successClient(size_t client) {
             failed_clients.push_back(client);
             done = true;
+            jobs_complete++;
         }
 
         void failClient(size_t client) {
-            failed_clients.push_back(client);
+            //failed_clients.push_back(client);
         }
 
         bool clientOkay(size_t client) {
             for (size_t i = 0; i < failed_clients.size(); i++) {
-                if (client == failed_clients[i]) {
+                if (client == failed_clients.at(i)) {
+                    VLOG(1) << "Client not okay: (" << client << ")";
                     return false;
                 }
             }
@@ -71,7 +75,16 @@ class Job {
         bool operator==(const Job& j) const {
             return (walk == j.walk && sample == j.sample && job_id == j.job_id);
         }
+
+        friend std::ostream& operator<< (std::ostream& out, Job& job);
 };
+
+// Print event
+std::ostream& operator<< ( std::ostream& out, Job& job) {
+    out << "[w:" << job.walk << " s:" << job.sample << " id:" << job.job_id;
+    out << std::right << "]";
+    return out;
+}
 
 /**
  *  A class for an event, which holds an int for the event type, a double for simulation time and possibly other data.
@@ -276,9 +289,10 @@ bool nextAvailableJob(const size_t client, std::queue<Job*> &available_jobs, Job
             return true;
         } else {
             VLOG(2) << "Unfit client request.";
+            return false;
         }
     }
-    VLOG(2) << "No more available jobs.";
+    VLOG(3) << "No more available jobs.";
     return false;
 }
 
@@ -300,6 +314,28 @@ void checkSample(std::vector<std::vector<std::vector<Job*>*>*> &job_queue, std::
             available_jobs.push(sample->at(i));
         }
     }
+}
+
+bool jobsDone(std::vector<std::vector<std::vector<Job*>*>*> &job_queue) {
+    //TODO Fix this!
+    if (jobs_complete < total_jobs) {
+        return false;
+    }
+    return true;
+    /*
+    for (size_t i = 0; i < job_queue.size(); i++) {
+        std::vector<std::vector<Job*>*> *walk = job_queue[i];
+        for (size_t j = 0; j < walk->size(); j++) {
+            std::vector<Job*> *sample = walk->at(j);
+            for (size_t k = 0; k < sample->size(); k++) {
+                if (sample->at(k)->done == false) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+    */
 }
 
 void run_simulation(
@@ -344,7 +380,6 @@ void run_simulation(
         }
     }
 
-    // This needs to be freed
     // For each walk make the first sample available.
     std::queue<Job*> available_jobs;
     for (size_t i = 0; i < num_walks; i++) {
@@ -363,7 +398,7 @@ void run_simulation(
 
     VLOG(2) << "Start Simulation...";
 
-    while (!heap.empty()) {
+    while (!heap.empty() && !jobsDone(job_queue)) {
         Event *current_event = heap.top();
         size_t current_client = current_event->client;
         Job *current_job = current_event->job;
@@ -388,7 +423,7 @@ void run_simulation(
                 // If there is a job push a new event for either success or
                 // error. If there is no job in the queue then push another job
                 // request onto the queue.
-                VLOG(2) << "Request Job Begin";
+                VLOG(2) << "Request Job Begin (" << current_client << ")";
                 if (nextAvailableJob(current_client, available_jobs, next_job)) {
                     assert(next_job != nullptr);
                     // Add another request event
@@ -397,6 +432,8 @@ void run_simulation(
                     } else {
                         heap.push(new Event(simulation_time_s + duration_generator(), RETURN_SUCCESS, current_client, next_job));
                     }
+                } else {
+                    heap.push(new Event(simulation_time_s + current_event->wait_time, REQUEST_JOB, current_client, current_event->wait_time));
                 }
                 VLOG(2) << "Request Job End";
                 break;
@@ -406,6 +443,7 @@ void run_simulation(
                 // the walk. If there are jobs available create a new success
                 // or error event otherwise a new request event.
                 VLOG(2) << "Success Begin";
+                VLOG(2) << *current_job << " was successful.";
                 current_job->successClient(current_event->client);
                 checkSample(job_queue, available_jobs, current_job->walk, current_job->sample);
                 if (nextAvailableJob(current_client, available_jobs, next_job)) {
@@ -451,7 +489,25 @@ void run_simulation(
         delete current_event; // Event's are created with new, so we need to delete them when we're done with them
     }
 
+    for (size_t i = 0; i < num_workers; i++) {
+        Event *event = heap.top();
+        heap.pop();
+        delete event;
+    }
     assert(heap.empty());
+
+    // This needs to be freed
+    for (size_t i = 0; i < num_walks; i++) {
+        std::vector<std::vector<Job*>*> *walk = job_queue[i];
+        for (size_t j = 0; j < samples_per_walk; j++) {
+            std::vector<Job*> *sample = walk->at(j);
+            for (size_t k = 0; k < num_jobs_per_sample; k++) {
+                delete sample->at(k);
+            }
+            delete sample;
+        }
+        delete walk;
+    }
 
     VLOG(1) << "The simulation ended at time: " << simulation_time_s;
 }
@@ -471,8 +527,8 @@ int main(int argc, char **argv) {
 
     int seed = time(0);
     variate_generator< mt19937, std::uniform_real_distribution<> > error_generator(mt19937(seed), std::uniform_real_distribution<>(0, 1));
-    variate_generator< mt19937, lognormal_distribution<> > duration_generator(mt19937(seed+1), lognormal_distribution<>(means[2], stdevs[2]));
-    variate_generator< mt19937, lognormal_distribution<> > err_duration_generator(mt19937(seed+2), lognormal_distribution<>(err_means[2], err_stdevs[2]));
+    variate_generator< mt19937, lognormal_distribution<> > duration_generator(mt19937(seed+1), lognormal_distribution<>(means[0], stdevs[0]));
+    variate_generator< mt19937, lognormal_distribution<> > err_duration_generator(mt19937(seed+2), lognormal_distribution<>(err_means[0], err_stdevs[0]));
 
     for (size_t i = 0; i < 3; i++) {
         LOG(INFO) << i << ":Mean:" << means[i];
@@ -482,12 +538,34 @@ int main(int argc, char **argv) {
         LOG(INFO) << i << ":Errors:" << errors[i];
     }
 
+    std::ofstream outfile("duration.dat");
+    for (size_t i = 0; i < 9317; i++) {
+        outfile << duration_generator() << std::endl;
+    }
+    outfile.close();
+
     // Intiate
     size_t num_walks = 1;
-    size_t samples_per_walk = 1;
+    size_t samples_per_walk = 10;
     size_t num_workers = 2;
     size_t num_jobs_per_sample = 2;
     size_t quorum = 2;
+
+    if (argc >= 2) {
+        samples_per_walk = atoi(argv[1]);
+    }
+    if (argc >= 3) {
+        num_workers = atoi(argv[2]);
+    }
+    if (argc >= 4) {
+        num_walks = atoi(argv[3]);
+    }
+    total_jobs = num_walks * samples_per_walk * num_jobs_per_sample;
+
+    LOG(INFO) << "Number of Walks: " << num_walks;
+    LOG(INFO) << "Walk size: " << samples_per_walk;
+    LOG(INFO) << "Number of Workers: " << num_workers;
+    LOG(INFO) << "Number of simultaneous jobs: " << num_jobs_per_sample;
 
     // Open files
     std::stringstream filename;
@@ -624,4 +702,3 @@ int main(int argc, char **argv) {
     }
     outfile.close();
 }
-
