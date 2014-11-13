@@ -53,10 +53,18 @@ class Job {
         Job() : walk(0), sample(0), job_id(0) {}
         Job(size_t walk, size_t sample, size_t job) : done(false), walk(walk), sample(sample), job_id(job) {}
 
-        void successClient(size_t client) {
-            //failed_clients.push_back(client);
+        void successClient(size_t client, std::vector<std::vector<std::vector<Job*>*>*> &job_queue, size_t quorum) {
+            std::vector<Job*> *temp_sample = job_queue.at(walk)->at(sample);
             done = true;
-            jobs_complete++;
+            size_t num_complete = 0;
+            for (size_t i = 0; i < temp_sample->size(); i++) {
+                if (temp_sample->at(i)->done) {
+                    num_complete++;
+                }
+            }
+            if (num_complete >= quorum) {
+                jobs_complete++;
+            }
         }
 
         void failClient(size_t client) {
@@ -337,7 +345,7 @@ void checkSample(std::vector<std::vector<std::vector<Job*>*>*> &job_queue, std::
     }
 }
 
-bool jobsDone(std::vector<std::vector<std::vector<Job*>*>*> &job_queue) {
+bool jobsDone() {
     //TODO Fix this!
     if (jobs_complete < total_jobs) {
         return false;
@@ -360,6 +368,7 @@ double run_simulation(
         size_t num_jobs_per_sample,
         size_t quorum,
         float error_percent,
+        std::vector<double> data,
         variate_generator< mt19937, lognormal_distribution<> > &duration_generator,
         variate_generator< mt19937, lognormal_distribution<> > &err_duration_generator,
         variate_generator< mt19937, std::uniform_real_distribution<> > &error_generator) {
@@ -413,7 +422,7 @@ double run_simulation(
 
     VLOG(2) << "Start Simulation...";
 
-    while (!heap.empty() && !jobsDone(job_queue)) {
+    while (!heap.empty() && !jobsDone()) {
         Event *current_event = heap.top();
         size_t current_client = current_event->client;
         Job *current_job = current_event->job;
@@ -445,6 +454,7 @@ double run_simulation(
                         heap.push(new Event(simulation_time_s + err_duration_generator(), RETURN_ERROR, current_client, next_job));
                     } else {
                         heap.push(new Event(simulation_time_s + duration_generator(), RETURN_SUCCESS, current_client, next_job));
+                        //heap.push(new Event(simulation_time_s + generator(error_generator, data), RETURN_SUCCESS, current_client, next_job));
                     }
                 } else {
                     heap.push(new Event(simulation_time_s + current_event->wait_time, REQUEST_JOB, current_client, current_event->wait_time));
@@ -458,7 +468,7 @@ double run_simulation(
                 // or error event otherwise a new request event.
                 VLOG(2) << "Success Begin";
                 VLOG(2) << *current_job << " was successful.";
-                current_job->successClient(current_event->client);
+                current_job->successClient(current_event->client, job_queue, quorum);
                 success_jobs.push(current_job);
                 if (!worker_bans.at(current_client) && nextAvailableJob(current_client, available_jobs, next_job)) {
                     // Add another request event
@@ -466,6 +476,7 @@ double run_simulation(
                         heap.push(new Event(simulation_time_s + err_duration_generator(), RETURN_ERROR, current_client, next_job));
                     } else {
                         heap.push(new Event(simulation_time_s + duration_generator(), RETURN_SUCCESS, current_client, next_job));
+                        //heap.push(new Event(simulation_time_s + generator(error_generator, data), RETURN_SUCCESS, current_client, next_job));
                     }
                 } else {
                     heap.push(new Event(simulation_time_s + current_event->wait_time, REQUEST_JOB, current_client, current_event->wait_time));
@@ -487,6 +498,7 @@ double run_simulation(
                         heap.push(new Event(simulation_time_s + err_duration_generator(), RETURN_ERROR, current_client, next_job));
                     } else {
                         heap.push(new Event(simulation_time_s + duration_generator(), RETURN_SUCCESS, current_client, next_job));
+                        //heap.push(new Event(simulation_time_s + generator(error_generator, data), RETURN_SUCCESS, current_client, next_job));
                     }
                 } else {
                     heap.push(new Event(simulation_time_s + current_event->wait_time, REQUEST_JOB, current_client, current_event->wait_time));
@@ -633,7 +645,7 @@ int main(int argc, char **argv) {
     if (argc >= 4) {
         num_walks = atoi(argv[3]);
     }
-    total_jobs = num_walks * samples_per_walk * num_jobs_per_sample;
+    total_jobs = num_walks * samples_per_walk;
 
     LOG(INFO) << "Number of Walks: " << num_walks;
     LOG(INFO) << "Walk size: " << samples_per_walk;
@@ -647,7 +659,7 @@ int main(int argc, char **argv) {
 
     for (int i = 0; i < 3; i++) {
         for (int j = 0; j < iterations; j++) {
-            double simulation_time = run_simulation(num_walks, samples_per_walk, num_workers, num_jobs_per_sample, quorum, errors[i], duration_generators[i], err_duration_generators[i], error_generator);
+            double simulation_time = run_simulation(num_walks, samples_per_walk, num_workers, num_jobs_per_sample, quorum, errors[i], data[i], duration_generators[i], err_duration_generators[i], error_generator);
             simulation_times.push_back(simulation_time);
         }
 
@@ -668,10 +680,10 @@ int main(int argc, char **argv) {
         outfile << "------------------------------------------" << std::endl;
         outfile << "---------------- RUN TIMES ---------------" << std::endl;
         outfile << "------------------------------------------" << std::endl;
-        outfile << "Min run time: " << std::fixed <<  min_time << std::endl;
-        outfile << "Max run time: " << std::fixed << max_time << std::endl;
-        outfile << "Mean run time: " << std::fixed << avg_time << std::endl;
-        outfile << "Standard deviation of run time: " << std::fixed << std_time << std::endl;
+        outfile << "Min: " << std::fixed <<  min_time << std::endl;
+        outfile << "Max: " << std::fixed << max_time << std::endl;
+        outfile << "Mean: " << std::fixed << avg_time << std::endl;
+        outfile << "Stdev: " << std::fixed << std_time << std::endl;
         outfile << std::endl;
 
     }
