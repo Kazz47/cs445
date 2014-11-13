@@ -16,17 +16,19 @@ using boost::mt19937;
 using boost::lognormal_distribution;
 
 #define ONLY_EVENT_TYPE     0
-#define NUMBER_EVENT_TYPES  4
+#define NUMBER_EVENT_TYPES  5
 
 const static unsigned int REQUEST_JOB = 0;
 const static unsigned int RETURN_SUCCESS = 1;
 const static unsigned int RETURN_ERROR = 2;
 const static unsigned int CHECK_VALID = 3;
+const static unsigned int CHECK_WORKERS = 4;
 const std::string event_names[NUMBER_EVENT_TYPES] = {
     "REQUEST_JOB",
     "RETURN_SUCCESS",
     "RETURN_ERROR",
-    "CHECK_VALID"
+    "CHECK_VALID",
+    "CHECK_WORKERS"
 };
 
 std::vector<bool> job_queue;
@@ -52,19 +54,19 @@ class Job {
         Job(size_t walk, size_t sample, size_t job) : done(false), walk(walk), sample(sample), job_id(job) {}
 
         void successClient(size_t client) {
-            failed_clients.push_back(client);
+            //failed_clients.push_back(client);
             done = true;
             jobs_complete++;
         }
 
         void failClient(size_t client) {
-            //failed_clients.push_back(client);
+            failed_clients.push_back(client);
         }
 
         bool clientOkay(size_t client) {
             for (size_t i = 0; i < failed_clients.size(); i++) {
                 if (client == failed_clients.at(i)) {
-                    VLOG(1) << "Client not okay: (" << client << ")";
+                    VLOG(3) << "Client not okay: (" << client << ")";
                     return false;
                 }
             }
@@ -161,12 +163,17 @@ std::ostream& operator<< ( std::ostream& out, Event& event) {
     return out;
 }
 
-void parseFile(const std::string &file_name, std::vector<float> &means, std::vector<float> &stdevs, std::vector<float> &errors, std::vector<float> &err_means, std::vector<float> &err_stdevs) {
+void parseFile(
+        const std::string &file_name,
+        std::vector<double> &means, std::vector<double> &stdevs,
+        std::vector<double> &errors, std::vector<double> &err_means,
+        std::vector<double> &err_stdevs,
+        std::vector<std::vector<double>> &data) {
     LOG(INFO) << "Load file: '" << file_name << "'";
     std::ifstream infile(file_name);
 
-    std::vector<unsigned long> start_times, end_times, result_flags, wu_names;
-    std::vector<float> cpu_times;
+    std::vector<unsigned long> diff_times, result_flags, wu_names;
+    std::vector<double> cpu_times;
 
     std::string start_time, end_time, result_flag, cpu_time, wu_name;
 
@@ -185,8 +192,7 @@ void parseFile(const std::string &file_name, std::vector<float> &means, std::vec
         VLOG(3) << "CPU_TIME: " << cpu_time;
         result_flag.pop_back();
         VLOG(3) << "RESULT_FLAG: " << result_flag;
-        start_times.push_back(atoi(start_time.c_str()));
-        end_times.push_back(atoi(end_time.c_str()));
+        diff_times.push_back(atoi(end_time.c_str()) - atoi(start_time.c_str()));
         cpu_times.push_back(atof(cpu_time.c_str()));
         result_flags.push_back(atoi(result_flag.c_str()));
 
@@ -204,16 +210,20 @@ void parseFile(const std::string &file_name, std::vector<float> &means, std::vec
     }
     infile.close();
 
+    //Adjust data size to three arrays
+    data.resize(3);
+
     unsigned long sum[3] = {0, 0, 0};
     unsigned long size[3] = {0, 0, 0};
     unsigned long err_sum[3] = {0, 0, 0};
     unsigned long err_size[3] = {0, 0, 0};
     for (size_t i = 0; i < wu_names.size(); i++) {
-        long duration = end_times[i] - start_times[i];
+        long duration = diff_times[i];
         if (wu_names[i] == 1000) {
             if (result_flags[i] == 1) {
                 LOG_IF(ERROR, duration <= 0) << "Invalid duration: " << duration;
                 sum[0] += duration;
+                data[0].push_back(duration);
                 size[0]++;
             } else {
                 if (duration > 0) {
@@ -225,6 +235,7 @@ void parseFile(const std::string &file_name, std::vector<float> &means, std::vec
             if (result_flags[i] == 1) {
                 LOG_IF(ERROR, duration <= 0) << "Invalid duration: " << duration;
                 sum[1] += duration;
+                data[1].push_back(duration);
                 size[1]++;
             } else {
                 if (duration > 0) {
@@ -236,6 +247,7 @@ void parseFile(const std::string &file_name, std::vector<float> &means, std::vec
             if (result_flags[i] == 1) {
                 LOG_IF(ERROR, duration <= 0) << "Invalid duration: " << duration;
                 sum[2] += duration;
+                data[2].push_back(duration);
                 size[2]++;
             } else {
                 if (duration > 0) {
@@ -247,15 +259,15 @@ void parseFile(const std::string &file_name, std::vector<float> &means, std::vec
     }
 
     for (size_t i = 0; i < 3; i++) {
-        means.push_back(static_cast<float>(sum[i])/size[i]);
-        err_means.push_back(static_cast<float>(err_sum[i])/err_size[i]);
-        errors.push_back(static_cast<float>(err_size[i])/(err_size[i] + size[i]));
+        means.push_back(static_cast<double>(sum[i])/size[i]);
+        err_means.push_back(static_cast<double>(err_sum[i])/err_size[i]);
+        errors.push_back(static_cast<double>(err_size[i])/(err_size[i] + size[i]));
     }
 
     unsigned long stdev_sum[3] = {0, 0, 0};
     unsigned long err_stdev_sum[3] = {0, 0, 0};
     for (size_t i = 0; i < wu_names.size(); i++) {
-        int duration = end_times[i] - start_times[i];
+        int duration = diff_times[i];
         if (wu_names[i] == 1000) {
             if (result_flags[i] == 1) {
                 LOG_IF(ERROR, duration <= 0) << "Invalid duration: " << duration;
@@ -281,8 +293,12 @@ void parseFile(const std::string &file_name, std::vector<float> &means, std::vec
     }
 
     for (size_t i = 0; i < 3; i++) {
-        stdevs.push_back(sqrt(static_cast<float>(stdev_sum[i])/size[i]));
-        err_stdevs.push_back(sqrt(static_cast<float>(err_stdev_sum[i])/err_size[i]));
+        stdevs.push_back(sqrt(static_cast<double>(stdev_sum[i])/size[i]));
+        err_stdevs.push_back(sqrt(static_cast<double>(err_stdev_sum[i])/err_size[i]));
+    }
+
+    for (size_t i = 0; i < data.size(); i++) {
+        std::sort(data.at(i).begin(), data.at(i).end());
     }
 }
 
@@ -329,6 +345,14 @@ bool jobsDone(std::vector<std::vector<std::vector<Job*>*>*> &job_queue) {
     return true;
 }
 
+// Input data must be sorted and distribution must be from 0 to 1.
+double generator(variate_generator< mt19937, std::uniform_real_distribution<> > &gen, std::vector<double> &data) {
+    double val = gen() * (data.size()-1);
+    size_t low = data.at(floor(val));
+    size_t high = data.at(ceil(val));
+    return gen() * (high - low) + low;
+}
+
 double run_simulation(
         size_t num_walks,
         size_t samples_per_walk,
@@ -371,13 +395,18 @@ double run_simulation(
         }
     }
 
-    // Put initial events in the heap
+    // Put initial events in the heap and set worker error delays
+    std::vector<size_t> worker_errors;
+    std::vector<bool> worker_bans;
     for (int client_id = 0; client_id < num_workers; client_id++) {
+        worker_bans.push_back(false);
+        worker_errors.push_back(0);
         heap.push(new Event(simulation_time_s + client_id, REQUEST_JOB, client_id, 1));
     }
 
-    // Put initial validator event in heap
+    // Put initial validator events in heap
     heap.push(new Event(simulation_time_s + 10, CHECK_VALID));
+    heap.push(new Event(simulation_time_s + 86400, CHECK_WORKERS));
 
     // Reset Globals
     jobs_complete = 0;
@@ -409,8 +438,7 @@ double run_simulation(
                 // If there is a job push a new event for either success or
                 // error. If there is no job in the queue then push another job
                 // request onto the queue.
-                VLOG(2) << "Request Job Begin (" << current_client << ")";
-                if (nextAvailableJob(current_client, available_jobs, next_job)) {
+                if (!worker_bans.at(current_client) && nextAvailableJob(current_client, available_jobs, next_job)) {
                     assert(next_job != nullptr);
                     // Add another request event
                     if (error_generator() <= error_percent) {
@@ -432,7 +460,7 @@ double run_simulation(
                 VLOG(2) << *current_job << " was successful.";
                 current_job->successClient(current_event->client);
                 success_jobs.push(current_job);
-                if (nextAvailableJob(current_client, available_jobs, next_job)) {
+                if (!worker_bans.at(current_client) && nextAvailableJob(current_client, available_jobs, next_job)) {
                     // Add another request event
                     if (error_generator() <= error_percent) {
                         heap.push(new Event(simulation_time_s + err_duration_generator(), RETURN_ERROR, current_client, next_job));
@@ -450,9 +478,10 @@ double run_simulation(
                 // request event.
                 VLOG(2) << "Error Begin";
                 current_job->failClient(current_event->client);
+                worker_errors.at(current_event->client)++;
                 failure_jobs.push(current_job);
                 VLOG(2) << "Get next available job";
-                if (nextAvailableJob(current_event->client, available_jobs, next_job)) {
+                if (!worker_bans.at(current_client) && nextAvailableJob(current_event->client, available_jobs, next_job)) {
                     // Add another request event
                     if (error_generator() <= error_percent) {
                         heap.push(new Event(simulation_time_s + err_duration_generator(), RETURN_ERROR, current_client, next_job));
@@ -481,6 +510,22 @@ double run_simulation(
                 heap.push(new Event(simulation_time_s + 10, CHECK_VALID));
                 VLOG(3) << "Validator End";
                 break;
+            case 4: // CHECK_WORKERS
+                // Server checks how many errors each client has made each day.
+                // If the client's errors exceed 10 for that day then ban them
+                // from work for the next day.
+                VLOG(2) << "Worker Check Begin";
+                for (size_t worker_id = 0; worker_id < num_workers; worker_id++) {
+                    if (worker_errors.at(worker_id) >= 10) {
+                        worker_bans.at(worker_id) = true;
+                    } else {
+                        worker_bans.at(worker_id) = false;
+                    }
+                    worker_errors.at(worker_id) = 0;
+                }
+                heap.push(new Event(simulation_time_s + 86400, CHECK_WORKERS));
+                VLOG(2) << "Worker Check End";
+                break;
             default:
                 LOG(ERROR) << "Simulation had an event with an unknown type: " << current_event->type;
                 LOG(ERROR) << "\tsimulation time: " << simulation_time_s;
@@ -497,7 +542,8 @@ double run_simulation(
         heap.pop();
         delete event;
     }
-    heap.pop(); // One more for the validator
+    heap.pop(); // One for the validator
+    heap.pop(); // One for the worker check
     assert(heap.empty());
 
     // This needs to be freed
@@ -522,17 +568,31 @@ int main(int argc, char **argv) {
     // Log to Stderr
     FLAGS_logtostderr = 1;
 
-    std::vector<float> means;
-    std::vector<float> stdevs;
-    std::vector<float> err_means;
-    std::vector<float> err_stdevs;
-    std::vector<float> errors;
-    parseFile("../data/dna_workunit_transit.csv", means, stdevs, errors, err_means, err_stdevs);
+    std::vector<double> means;
+    std::vector<double> stdevs;
+    std::vector<double> err_means;
+    std::vector<double> err_stdevs;
+    std::vector<double> errors;
+    std::vector<std::vector<double>> data;
+    parseFile("../data/dna_workunit_transit.csv", means, stdevs, errors, err_means, err_stdevs, data);
 
     int seed = time(0);
     variate_generator< mt19937, std::uniform_real_distribution<> > error_generator(mt19937(seed), std::uniform_real_distribution<>(0, 1));
-    variate_generator< mt19937, lognormal_distribution<> > duration_generator(mt19937(seed+1), lognormal_distribution<>(means[0], stdevs[0]));
-    variate_generator< mt19937, lognormal_distribution<> > err_duration_generator(mt19937(seed+2), lognormal_distribution<>(err_means[0], err_stdevs[0]));
+    variate_generator< mt19937, lognormal_distribution<> > duration_generator_1000(mt19937(seed+2), lognormal_distribution<>(means[1], stdevs[1]));
+    variate_generator< mt19937, lognormal_distribution<> > duration_generator_100(mt19937(seed+2), lognormal_distribution<>(means[1], stdevs[1]));
+    variate_generator< mt19937, lognormal_distribution<> > duration_generator_10(mt19937(seed+3), lognormal_distribution<>(means[2], stdevs[2]));
+    std::vector<variate_generator< mt19937, lognormal_distribution<> >> duration_generators;
+    duration_generators.push_back(duration_generator_1000);
+    duration_generators.push_back(duration_generator_100);
+    duration_generators.push_back(duration_generator_10);
+
+    variate_generator< mt19937, lognormal_distribution<> > err_duration_generator_1000(mt19937(seed+4), lognormal_distribution<>(err_means[0], err_stdevs[0]));
+    variate_generator< mt19937, lognormal_distribution<> > err_duration_generator_100(mt19937(seed+5), lognormal_distribution<>(err_means[1], err_stdevs[1]));
+    variate_generator< mt19937, lognormal_distribution<> > err_duration_generator_10(mt19937(seed+6), lognormal_distribution<>(err_means[2], err_stdevs[2]));
+    std::vector<variate_generator< mt19937, lognormal_distribution<> >> err_duration_generators;
+    err_duration_generators.push_back(err_duration_generator_1000);
+    err_duration_generators.push_back(err_duration_generator_100);
+    err_duration_generators.push_back(err_duration_generator_10);
 
     for (size_t i = 0; i < 3; i++) {
         LOG(INFO) << i << ":Mean:" << means[i];
@@ -542,14 +602,22 @@ int main(int argc, char **argv) {
         LOG(INFO) << i << ":Errors:" << errors[i];
     }
 
-    std::ofstream outfile("duration.dat");
+    // Write distribution sample to files
+    /*
+    std::ofstream log_outfile("log_duration.dat");
+    std::ofstream emp_outfile("emp_duration.dat");
     for (size_t i = 0; i < 9317; i++) {
-        outfile << duration_generator() << std::endl;
+    //for (size_t i = 0; i < 13945; i++) {
+    //for (size_t i = 0; i < 10670; i++) {
+        log_outfile << duration_generator() << std::endl;
+        emp_outfile << generator(error_generator, data[0]) << std::endl;
     }
-    outfile.close();
+    log_outfile.close();
+    emp_outfile.close();
+    */
 
     // Intiate
-    size_t iterations = 1000;
+    size_t iterations = 100;
     size_t num_walks = 1;
     size_t samples_per_walk = 10;
     size_t num_workers = 2;
@@ -577,9 +645,9 @@ int main(int argc, char **argv) {
     filename << "dna_stats" << ".dat";
     outfile.open(filename.str());
 
-    for (int i = 2; i < 3; i++) {
+    for (int i = 0; i < 3; i++) {
         for (int j = 0; j < iterations; j++) {
-            double simulation_time = run_simulation(num_walks, samples_per_walk, num_workers, num_jobs_per_sample, quorum, errors[i], duration_generator, err_duration_generator, error_generator);
+            double simulation_time = run_simulation(num_walks, samples_per_walk, num_workers, num_jobs_per_sample, quorum, errors[i], duration_generators[i], err_duration_generators[i], error_generator);
             simulation_times.push_back(simulation_time);
         }
 
