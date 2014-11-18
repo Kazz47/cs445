@@ -12,3 +12,6 @@ target_link_libraries(snowflake ${Boost_SYSTEM_LIBRARY} ${OPENGL_LIBRARIES} ${GL
 add_executable(kg_dna dna_sim)
 target_link_libraries(kg_dna ${Boost_SYSTEM_LIBRARY} ${GLOG_LIBRARIES})
 
+add_executable(kg_fifo fifo_sim)
+target_link_libraries(kg_fifo ${GLOG_LIBRARIES})
+
