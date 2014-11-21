@@ -1,9 +1,10 @@
-#include <iostream>
 #include <fstream>
 #include <string>
 #include <limits>
 #include <random>
 #include <algorithm>
+#include <queue>
+#include <vector>
 
 #include <glog/logging.h>
 
@@ -13,10 +14,11 @@ std::vector<double> estimated_queue_lengths;
 // Output File
 std::ofstream outfile;
 
-double run_simulation(
-        float lambda,
-        float mu,
-        size_t n) {
+struct Packet {
+    unsigned int type;
+};
+
+double run_simulation(double lambda, std::vector<double> mu_vec, size_t n) {
     VLOG(2) << "Start Simulation...";
 
     // Init RNG
@@ -26,7 +28,7 @@ double run_simulation(
 
     double total_queue_lengths = 0;
     size_t arrivals = 0;
-    size_t queue_length = 0;
+    std::queue<size_t> packet_queue;
     // Simulation steps
     while (arrivals < n) {
         double arrival = distribution(generator);
@@ -36,15 +38,16 @@ double run_simulation(
         if (arrival <= lambda) {
             VLOG(2) << "Packet arrived";
             arrivals++;
-            queue_length++;
+            packet_queue.push(arrivals % mu_vec.size());
         }
 
         // Service
-        if (queue_length > 0 && service <= mu) {
-            VLOG(2) << "Packet packet serviced";
-            queue_length--;
+        if (!packet_queue.empty()) {
+            if (service <= mu_vec.at(packet_queue.front())) {
+                packet_queue.pop();
+            }
         }
-        total_queue_lengths += queue_length;
+        total_queue_lengths += packet_queue.size();
     }
 
     double average_queue_length = total_queue_lengths / n;
@@ -60,22 +63,27 @@ int main(int argc, char **argv) {
 
     // Intiate
     double lambda = 1.0;
-    double mu = 1.0;
+    std::vector<double> mu = {0.5, 0.25};
     size_t n = 1000;
     size_t iterations = 1000;
 
     if (argc >= 2) {
-        lambda = atof(argv[1]);
+        n = atoi(argv[1]);
     }
     if (argc >= 3) {
-        mu = atof(argv[2]);
+        lambda = atof(argv[2]);
     }
     if (argc >= 4) {
-        n = atoi(argv[3]);
+        mu.clear();
+        for (int i = 3; i < argc; i++) {
+            mu.push_back(atof(argv[i]));
+        }
     }
 
     LOG(INFO) << "Lambda: " << lambda;
-    LOG(INFO) << "Mu: " << mu;
+    for (int i = 0; i < mu.size(); i ++) {
+        LOG(INFO) << "Mu: " << mu.at(i);
+    }
     LOG(INFO) << "N: " << n;
     LOG(INFO) << "Iterations: " << iterations;
 
