@@ -4,18 +4,20 @@
 #include <string>
 #include <limits>
 #include <cmath>
+#include <iomanip>
+#include <algorithm>
 
 #include <glog/logging.h>
 
 #define ONLY_EVENT_TYPE     0
 #define NUMBER_EVENT_TYPES  2
-#define NUMBER_TOPOLOGY_TYPES  2
+#define NUMBER_TOPOLOGY_TYPES  3
 
 const static unsigned int COMPUTE = 0;
-const static unsigned int SEND_PACKET = 1;
+const static unsigned int PASS_PACKET = 1;
 const std::string event_names[NUMBER_EVENT_TYPES] = {
     "COMPUTE",
-    "SEND_PACKET"
+    "PASS_PACKET"
 };
 
 const static unsigned int RING = 0;
@@ -33,6 +35,37 @@ std::vector<double> simulation_times;
 // Output File
 std::ofstream outfile;
 
+class Node {
+    public:
+        size_t x;
+        size_t y;
+        size_t z;
+        size_t iteration;
+        size_t total_packets;
+
+        size_t current_iteration_packets = 0;
+        size_t next_iteration_packets = 0;
+
+        Node(size_t x, size_t y, size_t z, size_t iteration, size_t total_packets) : x(x), y(y), z(z), iteration(iteration), total_packets(total_packets) {}
+
+        bool operator==(const Node& j) const {
+            return (x == j.x && y == j.y && z == j.z);
+        }
+
+        bool operator!=(const Node& j) const {
+            return (x != j.x || y != j.y || z != j.z);
+        }
+
+        friend std::ostream& operator<< (std::ostream& out, Node& node);
+};
+
+// Print event
+std::ostream& operator<< ( std::ostream& out, Node& node) {
+    out << "[x:" << node.x << " y:" << node.y << " z:" << node.z;
+    out << std::right << "]";
+    return out;
+}
+
 class Packet {
     public:
         size_t x;
@@ -43,16 +76,20 @@ class Packet {
 
         Packet(size_t x, size_t y, size_t z, size_t iteration) : x(x), y(y), z(z), iteration(iteration) {}
 
-        bool operator==(const Job& j) const {
-            return (walk == j.walk && sample == j.sample && job_id == j.job_id);
+        bool operator==(const Packet& j) const {
+            return (x == j.x && y == j.y && z == j.z);
         }
 
-        friend std::ostream& operator<< (std::ostream& out, Job& job);
+        bool operator!=(const Packet& j) const {
+            return (x != j.x || y != j.y || z != j.z);
+        }
+
+        friend std::ostream& operator<< (std::ostream& out, Packet& packet);
 };
 
 // Print event
-std::ostream& operator<< ( std::ostream& out, Job& job) {
-    out << "[w:" << job.walk << " s:" << job.sample << " id:" << job.job_id;
+std::ostream& operator<< ( std::ostream& out, Packet& packet) {
+    out << "[x:" << packet.x << " y:" << packet.y << " z:" << packet.z;
     out << std::right << "]";
     return out;
 }
@@ -65,8 +102,23 @@ class Event {
     public:
         const double time;
         const int type;
+        Node *node;
+        Packet *packet = nullptr;
 
         Event(double time, int type) : time(time), type(type) {
+            node = nullptr;
+            packet = nullptr;
+            //cout << "created an event with simulation time: " << this->time << endl;
+            //cout << "created an event with event type: " << this->type << endl;
+        }
+
+        Event(double time, int type, Node *node) : time(time), type(type), node(node) {
+            packet = nullptr;
+            //cout << "created an event with simulation time: " << this->time << endl;
+            //cout << "created an event with event type: " << this->type << endl;
+        }
+
+        Event(double time, int type, Node *node, Packet *packet) : time(time), type(type), node(node), packet(packet) {
             //cout << "created an event with simulation time: " << this->time << endl;
             //cout << "created an event with event type: " << this->type << endl;
         }
@@ -105,30 +157,64 @@ std::ostream& operator<< ( std::ostream& out, Event& event) {
     return out;
 }
 
-double run_simulation(size_t nodes, size_t data, double compute_time, double latency, char topology) {
+Node* getNextNode(Node *node, Packet *packet, unsigned int topology, size_t num_nodes) {
+    Node *next_node = node;
+    switch (topology) {
+        case 0: // RING
+            if (packet->x > node->x) {
+                if (packet->x - node->x > num_nodes - packet->x + node->x) {
+                    // Get Node with x - 1
+                } else {
+                    // Get Node with x + 1
+                }
+            } else {
+                if (node->x - packet->x > num_nodes - node->x + packet->x) {
+                    // Get Node with x + 1
+                } else {
+                    // Get Node with x - 1
+                }
+            }
+            break;
+        case 1: // GRID
+            break;
+        case 2: // CUBE
+            break;
+        default:
+            LOG(FATAL) << "No topology with id '" << topology  << "' exists.";
+    }
+    return next_node;
+}
+
+double run_simulation(size_t nodes, size_t data, double compute_time, double latency, unsigned int topology) {
+    size_t nodes_x = nodes;
+    size_t nodes_y = 1;
+    size_t nodes_z = 1;
+
+    double iteration = 0;
     double simulation_time_s = 0;
     double previous_time_s = 0;
 
     std::priority_queue<Event*, std::vector<Event*>, CompareEvent> heap;
 
+    size_t packets_per_node = ceil(data/nodes);
+
+    std::vector<Node*> node_list;
+
     // Put initial events in the heap and set worker error delays
-    for (int node_id = 0; node_id < nodes; node_id++) {
-        heap.push(new Event(simulation_time_s + node_id, COMPUTE));
+    for (size_t x = 0; x < nodes_x; x++) {
+        for (size_t y = 0; y < nodes_y; y++) {
+            for (size_t z = 0; z < nodes_z; z++) {
+                Node *node = new Node(x, y, z, 0, packets_per_node);
+                node_list.push_back(node);
+                heap.push(new Event(simulation_time_s + (0.005 * data), COMPUTE, node));
+            }
+        }
     }
-
-    // Put initial validator events in heap
-    heap.push(new Event(simulation_time_s + 10, CHECK_VALID));
-    heap.push(new Event(simulation_time_s + 86400, CHECK_WORKERS));
-
-    // Reset Globals
-    jobs_complete = 0;
 
     VLOG(2) << "Start Simulation...";
 
-    while (!heap.empty() && !jobsDone()) {
+    while (!heap.empty() && iteration < 100) {
         Event *current_event = heap.top();
-        size_t current_client = current_event->client;
-        Job *current_job = current_event->job;
         heap.pop();
 
         if (current_event == NULL) {
@@ -143,103 +229,46 @@ double run_simulation(size_t nodes, size_t data, double compute_time, double lat
         // Calculate average time stuff
         double time_since_last = simulation_time_s - previous_time_s;
 
-        Job *next_job = nullptr;
+        Node *node = current_event->node;
+        Packet *packet = current_event->packet;
 
         switch (current_event->type) {
-            case 0: // REQUESET_JOB
-                // If there is a job push a new event for either success or
-                // error. If there is no job in the queue then push another job
-                // request onto the queue.
-                if (!worker_bans.at(current_client) && nextAvailableJob(current_client, available_jobs, next_job)) {
-                    assert(next_job != nullptr);
-                    // Add another request event
-                    if (error_generator() <= error_percent) {
-                        heap.push(new Event(simulation_time_s + err_duration_generator(), RETURN_ERROR, current_client, next_job));
-                    } else {
-                        heap.push(new Event(simulation_time_s + duration_generator(), RETURN_SUCCESS, current_client, next_job));
-                        //heap.push(new Event(simulation_time_s + generator(error_generator, data), RETURN_SUCCESS, current_client, next_job));
+            case 0: // COMPUTE
+                VLOG(2) << "Compute Begin";
+                LOG_IF(ERROR, packet != nullptr) << "Packet was not freed!";
+                for (size_t i = 0; i < node_list.size(); i++) {
+                    if (*node != *(node_list.at(i))) {
+                        Node *dest = node_list[i];
+                        for (size_t i = 0; i < node->total_packets; i++) {
+                            Packet *new_packet = new Packet(dest->x, dest->y, dest->z, node->iteration + 1);
+                            heap.push(new Event(simulation_time_s + 0.00001, PASS_PACKET, node, new_packet));
+                        }
                     }
-                } else {
-                    heap.push(new Event(simulation_time_s + current_event->wait_time, REQUEST_JOB, current_client, current_event->wait_time));
                 }
-                VLOG(2) << "Request Job End";
+                VLOG(2) << "Compute iteration " << iteration << " End";
                 break;
-            case 1: // RETURN_SUCCESS
-                // Server checks if there the quarum for this sample is
-                // complete if it is then create jobs for the next sample in
-                // the walk. If there are jobs available create a new success
-                // or error event otherwise a new request event.
-                VLOG(2) << "Success Begin";
-                VLOG(2) << *current_job << " was successful.";
-                current_job->successClient(current_event->client, job_queue, quorum);
-                success_jobs.push(current_job);
-                if (!worker_bans.at(current_client) && nextAvailableJob(current_client, available_jobs, next_job)) {
-                    // Add another request event
-                    if (error_generator() <= error_percent) {
-                        heap.push(new Event(simulation_time_s + err_duration_generator(), RETURN_ERROR, current_client, next_job));
+            case 1: // PASS_PACKET
+                VLOG(2) << "Pass Packet Begin";
+                if (packet->x == node->x && packet->y == node->y && packet->z == node->z) { // Packet is at its destination.
+                    VLOG(2) << "Packet is at its destination";
+                    if (packet->iteration == node->iteration) { // Received a packet for this iteration
+                        node->current_iteration_packets++;
+                        if (node->total_packets*(nodes-1) == node->current_iteration_packets - node->total_packets) {
+                            VLOG(2) << "Node ready to compute, start compute.";
+                            heap.push(new Event(simulation_time_s + (0.005) * data, COMPUTE));
+                        }
+                    } else if (packet->iteration == node->iteration + 1) { // Received a packet for the next interation
+                        node->next_iteration_packets++;
                     } else {
-                        heap.push(new Event(simulation_time_s + duration_generator(), RETURN_SUCCESS, current_client, next_job));
-                        //heap.push(new Event(simulation_time_s + generator(error_generator, data), RETURN_SUCCESS, current_client, next_job));
+                        LOG(ERROR) << "Incorrect packet iteration for current node!";
                     }
-                } else {
-                    heap.push(new Event(simulation_time_s + current_event->wait_time, REQUEST_JOB, current_client, current_event->wait_time));
+                    delete packet;
+                    packet = nullptr;
+                } else { // Packet needs to be passed on to next node
+                    Node *next_node = getNextNode(node, packet, topology, nodes);
+                    heap.push(new Event(simulation_time_s + 0.00001, PASS_PACKET, next_node, packet));
                 }
-                VLOG(2) << "Success End";
-                break;
-            case 2: // RETURN_ERROR
-                // Server creates a new job for the errored sample. If there
-                // are available jobs create a success or error event. Otherwise create a
-                // request event.
-                VLOG(2) << "Error Begin";
-                current_job->failClient(current_event->client);
-                worker_errors.at(current_event->client)++;
-                failure_jobs.push(current_job);
-                VLOG(2) << "Get next available job";
-                if (!worker_bans.at(current_client) && nextAvailableJob(current_event->client, available_jobs, next_job)) {
-                    // Add another request event
-                    if (error_generator() <= error_percent) {
-                        heap.push(new Event(simulation_time_s + err_duration_generator(), RETURN_ERROR, current_client, next_job));
-                    } else {
-                        heap.push(new Event(simulation_time_s + duration_generator(), RETURN_SUCCESS, current_client, next_job));
-                        //heap.push(new Event(simulation_time_s + generator(error_generator, data), RETURN_SUCCESS, current_client, next_job));
-                    }
-                } else {
-                    heap.push(new Event(simulation_time_s + current_event->wait_time, REQUEST_JOB, current_client, current_event->wait_time));
-                }
-                VLOG(2) << "Error End";
-                break;
-            case 3: // CHECK_VALID
-                // Server runs the validator and create new jobs where
-                // necessary.
-                VLOG(3) << "Validator Begin";
-                while (!success_jobs.empty()) {
-                    Job *temp_job = success_jobs.front();
-                    success_jobs.pop();
-                    checkSample(job_queue, available_jobs, temp_job->walk, temp_job->sample);
-                }
-                while (!failure_jobs.empty()) {
-                    Job *temp_job = failure_jobs.front();
-                    failure_jobs.pop();
-                    available_jobs.push(temp_job);
-                }
-                heap.push(new Event(simulation_time_s + 10, CHECK_VALID));
-                VLOG(3) << "Validator End";
-                break;
-            case 4: // CHECK_WORKERS
-                // Server checks how many errors each client has made each day.
-                // If the client's errors exceed 10 for that day then ban them
-                // from work for the next day.
-                VLOG(2) << "Worker Check Begin";
-                for (size_t worker_id = 0; worker_id < num_workers; worker_id++) {
-                    if (worker_errors.at(worker_id) >= 10) {
-                        worker_bans.at(worker_id) = true;
-                    } else {
-                        worker_bans.at(worker_id) = false;
-                    }
-                    worker_errors.at(worker_id) = 0;
-                }
-                heap.push(new Event(simulation_time_s + 86400, CHECK_WORKERS));
-                VLOG(2) << "Worker Check End";
+                VLOG(2) << "Pass Packet End";
                 break;
             default:
                 LOG(ERROR) << "Simulation had an event with an unknown type: " << current_event->type;
@@ -247,31 +276,13 @@ double run_simulation(size_t nodes, size_t data, double compute_time, double lat
                 exit(0);
         }
 
-        VLOG(3) << *current_event << ", h: " << heap.size();
-
         delete current_event; // Event's are created with new, so we need to delete them when we're done with them
     }
 
-    for (size_t i = 0; i < num_workers; i++) {
-        Event *event = heap.top();
-        heap.pop();
-        delete event;
-    }
-    heap.pop(); // One for the validator
-    heap.pop(); // One for the worker check
-    assert(heap.empty());
-
-    // This needs to be freed
-    for (size_t i = 0; i < num_walks; i++) {
-        std::vector<std::vector<Job*>*> *walk = job_queue[i];
-        for (size_t j = 0; j < samples_per_walk; j++) {
-            std::vector<Job*> *sample = walk->at(j);
-            for (size_t k = 0; k < num_jobs_per_sample; k++) {
-                delete sample->at(k);
-            }
-            delete sample;
-        }
-        delete walk;
+    //assert(heap.empty());
+    while(!node_list.empty()) {
+        delete node_list.back();
+        node_list.pop_back();
     }
 
     VLOG(1) << "The simulation ended at time: " << simulation_time_s;
@@ -279,90 +290,46 @@ double run_simulation(size_t nodes, size_t data, double compute_time, double lat
 }
 
 int main(int argc, char **argv) {
-    // Initialize Google Logging google::InitGoogleLogging(argv[0]);
+    // Initialize Google Logging
+    google::InitGoogleLogging(argv[0]);
     // Log to Stderr
     FLAGS_logtostderr = 1;
 
-    std::vector<double> means;
-    std::vector<double> stdevs;
-    std::vector<double> err_means;
-    std::vector<double> err_stdevs;
-    std::vector<double> errors;
-    std::vector<std::vector<double>> data;
-    parseFile("../data/dna_workunit_transit.csv", means, stdevs, errors, err_means, err_stdevs, data);
-
-    int seed = time(0);
-    variate_generator< mt19937, std::uniform_real_distribution<> > error_generator(mt19937(seed), std::uniform_real_distribution<>(0, 1));
-    variate_generator< mt19937, lognormal_distribution<> > duration_generator_1000(mt19937(seed+2), lognormal_distribution<>(means[1], stdevs[1]));
-    variate_generator< mt19937, lognormal_distribution<> > duration_generator_100(mt19937(seed+2), lognormal_distribution<>(means[1], stdevs[1]));
-    variate_generator< mt19937, lognormal_distribution<> > duration_generator_10(mt19937(seed+3), lognormal_distribution<>(means[2], stdevs[2]));
-    std::vector<variate_generator< mt19937, lognormal_distribution<> >> duration_generators;
-    duration_generators.push_back(duration_generator_1000);
-    duration_generators.push_back(duration_generator_100);
-    duration_generators.push_back(duration_generator_10);
-
-    variate_generator< mt19937, lognormal_distribution<> > err_duration_generator_1000(mt19937(seed+4), lognormal_distribution<>(err_means[0], err_stdevs[0]));
-    variate_generator< mt19937, lognormal_distribution<> > err_duration_generator_100(mt19937(seed+5), lognormal_distribution<>(err_means[1], err_stdevs[1]));
-    variate_generator< mt19937, lognormal_distribution<> > err_duration_generator_10(mt19937(seed+6), lognormal_distribution<>(err_means[2], err_stdevs[2]));
-    std::vector<variate_generator< mt19937, lognormal_distribution<> >> err_duration_generators;
-    err_duration_generators.push_back(err_duration_generator_1000);
-    err_duration_generators.push_back(err_duration_generator_100);
-    err_duration_generators.push_back(err_duration_generator_10);
-
-    for (size_t i = 0; i < 3; i++) {
-        LOG(INFO) << i << ":Mean:" << means[i];
-        LOG(INFO) << i << ":Stdevs:" << stdevs[i];
-        LOG(INFO) << i << ":ErrMean:" << err_means[i];
-        LOG(INFO) << i << ":ErrStdevs:" << err_stdevs[i];
-        LOG(INFO) << i << ":Errors:" << errors[i];
-    }
-
-    // Write distribution sample to files
-    /*
-    std::ofstream log_outfile("log_duration.dat");
-    std::ofstream emp_outfile("emp_duration.dat");
-    for (size_t i = 0; i < 9317; i++) {
-    //for (size_t i = 0; i < 13945; i++) {
-    //for (size_t i = 0; i < 10670; i++) {
-        log_outfile << duration_generator() << std::endl;
-        emp_outfile << generator(error_generator, data[0]) << std::endl;
-    }
-    log_outfile.close();
-    emp_outfile.close();
-    */
-
     // Intiate
-    size_t iterations = 100;
-    size_t num_walks = 1;
-    size_t samples_per_walk = 10;
-    size_t num_workers = 2;
-    size_t num_jobs_per_sample = 2;
-    size_t quorum = 2;
+    size_t iterations = 10;
+    size_t nodes = 3;
+    size_t data = 15;
+    double compute_time= 2;
+    double latency = 2;
+    unsigned int topology = RING;
 
     if (argc >= 2) {
-        samples_per_walk = atoi(argv[1]);
+        nodes = atoi(argv[1]);
     }
     if (argc >= 3) {
-        num_workers = atoi(argv[2]);
+        data = atoi(argv[2]);
     }
     if (argc >= 4) {
-        num_walks = atoi(argv[3]);
+        compute_time = atof(argv[3]);
     }
-    total_jobs = num_walks * samples_per_walk;
+    if (argc >= 5) {
+        latency = atof(argv[4]);
+    }
 
-    LOG(INFO) << "Number of Walks: " << num_walks;
-    LOG(INFO) << "Walk size: " << samples_per_walk;
-    LOG(INFO) << "Number of Workers: " << num_workers;
-    LOG(INFO) << "Number of simultaneous jobs: " << num_jobs_per_sample;
+    LOG(INFO) << "Iterations: " << iterations;
+    LOG(INFO) << "Nodes: " << nodes;
+    LOG(INFO) << "Data: " << data;
+    LOG(INFO) << "Compute Time: " << compute_time;
+    LOG(INFO) << "Latency: " << latency;
 
     // Open files
     std::stringstream filename;
-    filename << "dna_stats" << ".dat";
+    filename << "nbody_stats" << ".dat";
     outfile.open(filename.str());
 
     for (int i = 0; i < 3; i++) {
         for (int j = 0; j < iterations; j++) {
-            double simulation_time = run_simulation(num_walks, samples_per_walk, num_workers, num_jobs_per_sample, quorum, errors[i], data[i], duration_generators[i], err_duration_generators[i], error_generator);
+            double simulation_time = run_simulation(nodes, data, compute_time, latency, topology);
             simulation_times.push_back(simulation_time);
         }
 
