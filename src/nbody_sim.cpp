@@ -35,37 +35,6 @@ std::vector<double> simulation_times;
 // Output File
 std::ofstream outfile;
 
-class Node {
-    public:
-        size_t x;
-        size_t y;
-        size_t z;
-        size_t iteration;
-        size_t total_packets;
-
-        size_t current_iteration_packets = 0;
-        size_t next_iteration_packets = 0;
-
-        Node(size_t x, size_t y, size_t z, size_t iteration, size_t total_packets) : x(x), y(y), z(z), iteration(iteration), total_packets(total_packets) {}
-
-        bool operator==(const Node& j) const {
-            return (x == j.x && y == j.y && z == j.z);
-        }
-
-        bool operator!=(const Node& j) const {
-            return (x != j.x || y != j.y || z != j.z);
-        }
-
-        friend std::ostream& operator<< (std::ostream& out, Node& node);
-};
-
-// Print event
-std::ostream& operator<< ( std::ostream& out, Node& node) {
-    out << "[x:" << node.x << " y:" << node.y << " z:" << node.z;
-    out << std::right << "]";
-    return out;
-}
-
 class Packet {
     public:
         size_t x;
@@ -94,6 +63,71 @@ std::ostream& operator<< ( std::ostream& out, Packet& packet) {
     return out;
 }
 
+class Node {
+    public:
+        size_t x;
+        size_t y;
+        size_t z;
+        size_t iteration;
+        size_t total_packets;
+
+        size_t current_iteration_packets = 0;
+        size_t next_iteration_packets = 0;
+
+        // Out-bound queues
+        std::queue<Packet*> *back;
+        std::queue<Packet*> *foreward;
+        std::queue<Packet*> *down;
+        std::queue<Packet*> *up;
+        std::queue<Packet*> *right;
+        std::queue<Packet*> *left;
+
+        Node(size_t x, size_t y, size_t z, size_t iteration, size_t total_packets) : x(x), y(y), z(z), iteration(iteration), total_packets(total_packets) {
+            back = new std::queue<Packet*>();
+            foreward = new std::queue<Packet*>();
+            down = new std::queue<Packet*>();
+            up = new std::queue<Packet*>();
+            right = new std::queue<Packet*>();
+            left = new std::queue<Packet*>();
+        }
+
+        ~Node() {
+            delete back;
+            delete foreward;
+            delete down;
+            delete up;
+            delete right;
+            delete left;
+        }
+
+        std::queue<Packet*> *enqueueLeft(Packet *p, bool &need_init) {
+            if (back->empty()) {
+                need_init = true;
+            } else {
+                need_init = false;
+            }
+            left->push(p);
+            return left;
+        }
+
+        bool operator==(const Node& j) const {
+            return (x == j.x && y == j.y && z == j.z);
+        }
+
+        bool operator!=(const Node& j) const {
+            return (x != j.x || y != j.y || z != j.z);
+        }
+
+        friend std::ostream& operator<< (std::ostream& out, Node& node);
+};
+
+// Print event
+std::ostream& operator<< ( std::ostream& out, Node& node) {
+    out << "[x:" << node.x << " y:" << node.y << " z:" << node.z;
+    out << std::right << "]";
+    return out;
+}
+
 /**
  *  A class for an event, which holds an int for the event type, a double for simulation time and possibly other data.
  *  We may want to subclass this with our own events
@@ -103,22 +137,22 @@ class Event {
         const double time;
         const int type;
         Node *node;
-        Packet *packet = nullptr;
+        std::queue<Packet*> *stream = nullptr;
 
         Event(double time, int type) : time(time), type(type) {
             node = nullptr;
-            packet = nullptr;
+            stream = nullptr;
             //cout << "created an event with simulation time: " << this->time << endl;
             //cout << "created an event with event type: " << this->type << endl;
         }
 
         Event(double time, int type, Node *node) : time(time), type(type), node(node) {
-            packet = nullptr;
+            stream = nullptr;
             //cout << "created an event with simulation time: " << this->time << endl;
             //cout << "created an event with event type: " << this->type << endl;
         }
 
-        Event(double time, int type, Node *node, Packet *packet) : time(time), type(type), node(node), packet(packet) {
+        Event(double time, int type, Node *node, std::queue<Packet*> *stream) : time(time), type(type), node(node), stream(stream) {
             //cout << "created an event with simulation time: " << this->time << endl;
             //cout << "created an event with event type: " << this->type << endl;
         }
@@ -157,42 +191,109 @@ std::ostream& operator<< ( std::ostream& out, Event& event) {
     return out;
 }
 
-Node* getNextNode(Node *node, Packet *packet, unsigned int topology, size_t num_nodes, std::vector<std::vector<std::vector<Node*>*>*> node_mat) {
-    Node *next_node = node;
-    VLOG(2) << "NODE: " << *node;
-    VLOG(2) << "PCKT: " << *packet;
+Node *getNextNode(
+        Node *node,
+        std::queue<Packet*> *stream,
+        unsigned int topology,
+        size_t num_nodes,
+        std::vector<std::vector<std::vector<Node*>*>*> node_mat) {
+    VLOG(3) << "NODE: " << *node;
+    Node *next_node = nullptr;
+    switch (topology) {
+        case 0: // RING
+            if (node->back == stream) {
+                // Get Node with x - 1
+                if (node->x == 0) {
+                    next_node = node_mat.at(num_nodes-1)->at(node->y)->at(node->z);
+                } else {
+                    next_node = node_mat.at(node->x-1)->at(node->y)->at(node->z);
+                }
+            } else if (node->foreward == stream) {
+                // Get Node with x + 1
+                if (node->x == num_nodes - 1) {
+                    next_node = node_mat.at(0)->at(node->y)->at(node->z);
+                } else {
+                    next_node = node_mat.at(node->x+1)->at(node->y)->at(node->z);
+                }
+            } else {
+                LOG(ERROR) << "Invalid stream";
+            }
+            break;
+        case 1: // GRID
+            if (node->foreward == stream) {
+                next_node = node_mat.at(node->x+1)->at(node->y)->at(node->z);
+            } else if (node->back == stream) {
+                next_node = node_mat.at(node->x-1)->at(node->y)->at(node->z);
+            } else if (node->right == stream) {
+                next_node = node_mat.at(node->x)->at(node->y+1)->at(node->z);
+            } else if (node->left == stream) {
+                next_node = node_mat.at(node->x)->at(node->y-1)->at(node->z);
+            } else {
+                LOG(ERROR) << "Invalid stream";
+            }
+            break;
+        case 2: // CUBE
+            if (node->foreward == stream) {
+                next_node = node_mat.at(node->x+1)->at(node->y)->at(node->z);
+            } else if (node->back == stream) {
+                next_node = node_mat.at(node->x-1)->at(node->y)->at(node->z);
+            } else if (node->right == stream) {
+                next_node = node_mat.at(node->x)->at(node->y+1)->at(node->z);
+            } else if (node->left == stream) {
+                next_node = node_mat.at(node->x)->at(node->y-1)->at(node->z);
+            } else if (node->down == stream) {
+                next_node = node_mat.at(node->x)->at(node->y)->at(node->z+1);
+            } else if (node->up == stream) {
+                next_node = node_mat.at(node->x)->at(node->y)->at(node->z-1);
+            } else {
+                LOG(ERROR) << "Invalid stream";
+            }
+            break;
+        default:
+            LOG(FATAL) << "No topology with id '" << topology  << "' exists.";
+    }
+    VLOG(3) << "NEXT: " << *next_node;
+    return next_node;
+}
+
+std::queue<Packet*> *enqueuePacket(Node *node, Packet *packet, unsigned int topology, size_t num_nodes, bool &need_init) {
+    VLOG(3) << "NODE: " << *node;
+    VLOG(3) << "PCKT: " << *packet;
+    std::vector<std::queue<Packet*>*> queues;
+    std::queue<Packet*> *queue = nullptr;
+    need_init = false;
     switch (topology) {
         case 0: // RING
             if (packet->x > node->x) {
                 if (packet->x - node->x > num_nodes - packet->x + node->x) {
                     // Get Node with x - 1
                     if (node->x == 0) {
-                        next_node = node_mat.at(num_nodes-1)->at(node->y)->at(node->z);
+                        queues.push_back(node->back);
                     } else {
-                        next_node = node_mat.at(node->x-1)->at(node->y)->at(node->z);
+                        queues.push_back(node->back);
                     }
                 } else {
                     // Get Node with x + 1
                     if (node->x == num_nodes - 1) {
-                        next_node = node_mat.at(0)->at(node->y)->at(node->z);
+                        queues.push_back(node->foreward);
                     } else {
-                        next_node = node_mat.at(node->x+1)->at(node->y)->at(node->z);
+                        queues.push_back(node->foreward);
                     }
                 }
             } else {
                 if (node->x - packet->x > num_nodes - node->x + packet->x) {
                     // Get Node with x + 1
                     if (node->x == num_nodes - 1) {
-                        next_node = node_mat.at(0)->at(node->y)->at(node->z);
+                        queues.push_back(node->foreward);
                     } else {
-                        next_node = node_mat.at(node->x+1)->at(node->y)->at(node->z);
+                        queues.push_back(node->foreward);
                     }
                 } else {
                     // Get Node with x - 1
                     if (node->x == 0) {
-                        next_node = node_mat.at(num_nodes-1)->at(node->y)->at(node->z);
+                        queues.push_back(node->back);
                     } else {
-                        next_node = node_mat.at(node->x-1)->at(node->y)->at(node->z);
+                        queues.push_back(node->back);
                     }
                 }
             }
@@ -201,68 +302,70 @@ Node* getNextNode(Node *node, Packet *packet, unsigned int topology, size_t num_
             if (node->x != packet->x) {
                 // Move packet in x direction
                 if (packet->x > node->x) {
-                    // Down
-                    next_node = node_mat.at(node->x+1)->at(node->y)->at(node->z);
+                    queues.push_back(node->foreward); // Foreward
                 } else {
-                    // Up
-                    next_node = node_mat.at(node->x-1)->at(node->y)->at(node->z);
+                    queues.push_back(node->back); // Back
                 }
-            } else if (node->y != packet->y) {
+            }
+            if (node->y != packet->y) {
                 // Move packet in y direction
                 if (packet->y > node->y) {
-                    // Right
-                    next_node = node_mat.at(node->x)->at(node->y+1)->at(node->z);
+                    queues.push_back(node->right); // Right
                 } else {
-                    // Left
-                    next_node = node_mat.at(node->x)->at(node->y-1)->at(node->z);
+                    queues.push_back(node->left); // Left
                 }
-            } else {
-                LOG(FATAL) << "Packet already at destination!";
             }
             break;
         case 2: // CUBE
             if (node->x != packet->x) {
                 // Move packet in x direction
                 if (packet->x > node->x) {
-                    // Down
-                    next_node = node_mat.at(node->x+1)->at(node->y)->at(node->z);
+                    queues.push_back(node->foreward); // Foreward
                 } else {
-                    // Up
-                    next_node = node_mat.at(node->x-1)->at(node->y)->at(node->z);
+                    queues.push_back(node->back); // Back
                 }
-            } else if (node->y != packet->y) {
+            }
+            if (node->y != packet->y) {
                 // Move packet in y direction
                 if (packet->y > node->y) {
-                    // Right
-                    next_node = node_mat.at(node->x)->at(node->y+1)->at(node->z);
+                    queues.push_back(node->right); // Right
                 } else {
-                    // Left
-                    next_node = node_mat.at(node->x)->at(node->y-1)->at(node->z);
+                    queues.push_back(node->left); // Left
                 }
-            } else if (node->z != packet->z) {
+            }
+            if (node->z != packet->z) {
                 // Move packet in z direction
                 if (packet->z > node->z) {
-                    // Foreward
-                    next_node = node_mat.at(node->x)->at(node->y)->at(node->z+1);
+                    queues.push_back(node->down); // Down
                 } else {
-                    // Back
-                    next_node = node_mat.at(node->x)->at(node->y)->at(node->z-1);
+                    queues.push_back(node->up); // Up
                 }
-            } else {
-                LOG(FATAL) << "Packet already at destination!";
             }
             break;
         default:
             LOG(FATAL) << "No topology with id '" << topology  << "' exists.";
     }
-    VLOG(2) << "NEXT: " << *next_node;
-    return next_node;
+    // Insert packet into viable queue with shortest length
+    if (!queues.empty()) {
+        for (size_t i = 0; i < queues.size(); i++) {
+            if (queue == nullptr || queues.at(i)->size() < queue->size()) {
+                queue = queues.at(i);
+            }
+        }
+        if (queue->empty()) {
+            need_init = true;
+        }
+        queue->push(packet);
+    } else {
+        LOG(FATAL) << "Packet already at destination!";
+    }
+    return queue;
 }
 
 double run_simulation(size_t nodes, size_t data, double compute_time, double latency, unsigned int topology, size_t iterations) {
-    size_t nodes_x;
-    size_t nodes_y;
-    size_t nodes_z;
+    size_t nodes_x = 0;
+    size_t nodes_y = 0;
+    size_t nodes_z = 0;
 
     if (topology == RING) {
         nodes_x = nodes;
@@ -276,8 +379,9 @@ double run_simulation(size_t nodes, size_t data, double compute_time, double lat
         nodes_x = nodes;
         nodes_y = nodes;
         nodes_z = nodes;
+    } else {
+        LOG(ERROR) << "Unknown topology: '" << topology << "'";
     }
-
 
     double iteration = 0;
     double simulation_time_s = 0;
@@ -329,12 +433,14 @@ double run_simulation(size_t nodes, size_t data, double compute_time, double lat
         double time_since_last = simulation_time_s - previous_time_s;
 
         Node *node = current_event->node;
-        Packet *packet = current_event->packet;
+        std::queue<Packet*> *stream= current_event->stream;
+        Packet *packet = nullptr;
+        Node *next_node = nullptr;
 
         switch (current_event->type) {
             case 0: // COMPUTE
                 VLOG(2) << "Compute Begin";
-                LOG_IF(ERROR, packet != nullptr) << "Packet was not freed!";
+                LOG_IF(ERROR, stream != nullptr) << "Stream was not freed!";
                 for (size_t x = 0; x < node_mat.size(); x++) {
                     std::vector<std::vector<Node*>*> *y_vec = node_mat.at(x);
                     for (size_t y = 0; y < y_vec->size(); y++) {
@@ -344,7 +450,11 @@ double run_simulation(size_t nodes, size_t data, double compute_time, double lat
                                 Node *dest = z_vec->at(z);
                                 for (size_t i = 0; i < node->total_packets; i++) {
                                     Packet *new_packet = new Packet(dest->x, dest->y, dest->z, node->iteration + 1);
-                                    heap.push(new Event(simulation_time_s + send_distribution(generator), PASS_PACKET, node, new_packet));
+                                    bool need_init = false;
+                                    std::queue<Packet*> *queue = enqueuePacket(node, new_packet, topology, nodes, need_init);
+                                    if (need_init) {
+                                        heap.push(new Event(simulation_time_s + (compute_distribution(generator) * data), PASS_PACKET, node, queue));
+                                    }
                                 }
                             }
                         }
@@ -353,8 +463,15 @@ double run_simulation(size_t nodes, size_t data, double compute_time, double lat
                 VLOG(2) << "Compute iteration " << iteration << " End";
                 break;
             case 1: // PASS_PACKET
+                // This needs work. Should continue creating PASS_PACKET events
+                // unless the current stream is empty.
                 VLOG(2) << "Pass Packet Begin";
-                if (packet->x == node->x && packet->y == node->y && packet->z == node->z) { // Packet is at its destination.
+                LOG_IF(FATAL, stream->empty()) << "Stream is empty!";
+                packet = stream->front();
+                stream->pop();
+
+                next_node = getNextNode(node, stream, topology, nodes, node_mat);
+                if (packet->x == next_node->x && packet->y == next_node->y && packet->z == next_node->z) { // Packet is at its destination.
                     VLOG(2) << "Packet is at its destination";
                     if (packet->iteration == node->iteration) { // Received a packet for this iteration
                         node->current_iteration_packets++;
@@ -370,10 +487,13 @@ double run_simulation(size_t nodes, size_t data, double compute_time, double lat
                     delete packet;
                     packet = nullptr;
                 } else { // Packet needs to be passed on to next node
-                    Node *next_node = getNextNode(node, packet, topology, nodes, node_mat);
-                    VLOG(2) << *next_node;
-                    heap.push(new Event(simulation_time_s + send_distribution(generator), PASS_PACKET, next_node, packet));
+                    bool need_init = false;
+                    std::queue<Packet*> *queue = enqueuePacket(next_node, packet, topology, nodes, need_init);
+                    if (need_init) {
+                        heap.push(new Event(simulation_time_s + (compute_distribution(generator) * data), PASS_PACKET, next_node, queue));
+                    }
                 }
+
                 VLOG(2) << "Pass Packet End";
                 break;
             default:
@@ -412,7 +532,7 @@ int main(int argc, char **argv) {
     FLAGS_logtostderr = 1;
 
     // Intiate
-    size_t iterations = 100000;
+    size_t iterations = 100;
     size_t nodes = 5;
     size_t data = 200;
     double compute_time= 0.005;
