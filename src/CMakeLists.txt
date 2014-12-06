@@ -1,4 +1,4 @@
-include_directories(${Boost_INCLUDE_DIRS} ${GLOG_INCLUDE_DIRS})
+include_directories(${INCLUDE_DIRS} ${Boost_INCLUDE_DIRS} ${GLOG_INCLUDE_DIRS})
 
 add_executable(kg_hw1 hw1)
 target_link_libraries(kg_hw1 ${Boost_SYSTEM_LIBRARY} ${GLOG_LIBRARIES})

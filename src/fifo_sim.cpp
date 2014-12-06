@@ -65,7 +65,7 @@ int main(int argc, char **argv) {
     double lambda = 1.0;
     std::vector<double> mu = {0.5, 0.25};
     size_t n = 1000;
-    size_t iterations = 1000;
+    size_t iterations = 10000;
 
     if (argc >= 2) {
         n = atoi(argv[1]);
