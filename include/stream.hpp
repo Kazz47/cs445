@@ -1,6 +1,7 @@
 #ifndef STREAM_H
 #define STREAM_H
 
+#include <cstddef>
 #include <queue>
 
 #include "packet.hpp"
@@ -11,46 +12,19 @@ class Stream {
     private:
         StreamDirection direction;
         std::queue<Packet*> *stream;
-        bool running = false;
+        Packet* active_packet = nullptr;
 
     public:
-        Stream(StreamDirection dir) {
-            this->direction = dir;
-            stream = new std::queue<Packet*>;
-        }
+        Stream(StreamDirection dir);
+        ~Stream();
+        StreamDirection getDirection();
+        size_t size();
+        void push(Packet* packet);
 
-        ~Stream() {
-            delete stream;
-        }
+        void transferPacket();
+        Packet* servicePacket();
 
-        StreamDirection getDirection() {
-            return this->direction;
-        }
-
-        size_t size() {
-            return stream->size();
-        }
-
-        void push(Packet* packet) {
-            stream->push(packet);
-        }
-
-        Packet* pop() {
-            Packet* result = nullptr;
-            if (!stream->empty()) {
-                result = stream->back();
-                stream->pop();
-            }
-            return result;
-        }
-
-        bool needsInit() {
-            if (!stream->empty() && !running) {
-                return false;
-            } else {
-                return true;
-            }
-        }
+        bool needsInit();
 };
 
 #endif //STREAM_H

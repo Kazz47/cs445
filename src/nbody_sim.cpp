@@ -6,12 +6,11 @@
 #include <iomanip>
 #include <algorithm>
 
+#include "packet.hpp"
 #include "node.hpp"
 #include "event.hpp"
 
 #include <glog/logging.h>
-
-enum class Topology {RING, GRID, CUBE, SIZE};
 
 // Stats vectors
 std::vector<double> simulation_times;
@@ -21,14 +20,14 @@ std::ofstream outfile;
 
 // Print packet
 std::ostream& operator<< ( std::ostream& out, Packet& packet) {
-    out << "[x:" << packet.x << " y:" << packet.y << " z:" << packet.z;
+    out << "[x:" << packet.getX() << " y:" << packet.getY() << " z:" << packet.getZ();
     out << std::right << "]";
     return out;
 }
 
 // Print node
 std::ostream& operator<< ( std::ostream& out, Node& node) {
-    out << "[x:" << node.x << " y:" << node.y << " z:" << node.z;
+    out << "[x:" << node.getX() << " y:" << node.getY() << " z:" << node.getZ();
     out << std::right << "]";
     return out;
 }
@@ -101,10 +100,11 @@ double runSimulation(size_t nodes, size_t data, double compute_time, double late
             std::vector<Node*> *y_vec = new std::vector<Node*>();
             x_vec->push_back(y_vec);
             for (size_t z = 0; z < nodes_z; z++) {
-                Node *node = new Node(x, y, z, 0, packets_per_node);
+                Node *node = new Node(x, y, z, 0, packets_per_node, packets_per_node*(total_nodes - 1));
                 y_vec->push_back(node);
-                double compute_duration = (compute_distribution(generator) * data);
+                double compute_duration = compute_distribution(generator) * data;
                 node->updateComputeTime(simulation_time_s, compute_duration);
+                LOG_IF(FATAL, node == nullptr);
                 heap.push(new Event(simulation_time_s + compute_duration, EventType::COMPUTE, node));
             }
         }
@@ -113,10 +113,11 @@ double runSimulation(size_t nodes, size_t data, double compute_time, double late
     VLOG(2) << "Start Simulation...";
 
     while (complete_nodes != total_nodes) {
+        LOG_IF(FATAL, heap.empty()) << "Simulation heap was empty.";
         Event *current_event = heap.top();
         heap.pop();
 
-        if (current_event == NULL) {
+        if (current_event == nullptr) {
             LOG(ERROR) << "Simulation not complete and there are no events in the min heap.";
             LOG(ERROR) << "\tsimulation time: " << simulation_time_s;
             exit(0);
@@ -129,14 +130,14 @@ double runSimulation(size_t nodes, size_t data, double compute_time, double late
         double time_since_last = simulation_time_s - previous_time_s;
 
         Node *node = current_event->node;
-        std::queue<Packet*> *stream= current_event->stream;
-        Packet *packet = nullptr;
+        Stream* stream = current_event->stream;
+        Packet* packet = nullptr;
         Node *next_node = nullptr;
 
         switch (current_event->type) {
-            case 0: // COMPUTE
-                VLOG(3) << "Compute Begin";
-                LOG_IF(ERROR, stream != nullptr) << "Stream was not freed!";
+            case EventType::COMPUTE:
+                VLOG(2) << "Compute Begin: Node" << *node;
+                VLOG(2) << "Iteration: " << node->getIteration();
                 for (size_t x = 0; x < node_mat.size(); x++) {
                     std::vector<std::vector<Node*>*> *y_vec = node_mat.at(x);
                     for (size_t y = 0; y < y_vec->size(); y++) {
@@ -144,77 +145,76 @@ double runSimulation(size_t nodes, size_t data, double compute_time, double late
                         for (size_t z = 0; z < z_vec->size(); z++) {
                             if (*node != *(z_vec->at(z))) {
                                 Node *dest = z_vec->at(z);
+                                LOG_IF(FATAL, dest == nullptr);
                                 for (size_t i = 0; i < node->getNumPacketsToSend(); i++) {
-                                    Packet *new_packet = new Packet(dest->x, dest->y, dest->z, node->iteration);
-                                    bool need_init = false;
-                                    std::queue<Packet*> *queue = enqueuePacket(node, new_packet, topology, nodes, need_init);
-                                    if (need_init) {
-                                        heap.push(new Event(simulation_time_s + send_distribution(generator), EventType::PASS_PACKET, node, queue));
+                                    Packet* new_packet = new Packet(dest->getX(), dest->getY(), dest->getZ(), current_event->iteration);
+                                    Stream* stream = node->enqueuePacket(new_packet, topology, nodes);
+                                    if (stream->needsInit()) {
+                                        stream->transferPacket();
+                                        heap.push(new Event(simulation_time_s + send_distribution(generator), EventType::PASS_PACKET, node, stream));
                                     }
                                 }
                             }
                         }
                     }
                 }
+                VLOG(2) << "Compute End";
                 break;
-            case 1: // PASS_PACKET
+            case EventType::PASS_PACKET:
                 // This needs work. Should continue creating PASS_PACKET events
                 // unless the current stream is empty.
                 VLOG(4) << "Pass Packet Begin";
-                LOG_IF(FATAL, stream->empty()) << "Stream is empty!";
-                packet = stream->front();
-                stream->pop();
+                LOG_IF(FATAL, stream == nullptr) << "Stream was null.";
+                packet = stream->servicePacket();
+                LOG_IF(FATAL, packet == nullptr) << "Stream was empty: " << *node << static_cast<size_t>(stream->getDirection());
 
-                next_node = getNextNode(node, stream, topology, nodes, node_mat);
-                if (packet->x == next_node->x && packet->y == next_node->y && packet->z == next_node->z) { // Packet is at its destination.
-                    VLOG(2) << "Packet is at its destination";
-                    if (packet->iteration == node->iteration) { // Received a packet for this iteration
-                        node->current_iteration_packets++;
-                        VLOG(2) << "Received packet for this iteration: " << node->getNumPacketsToSend()*(total_nodes-1) << " : " << node->current_iteration_packets;
-                        if (node->getNumPacketsToSend()*(total_nodes-1) == node->current_iteration_packets) {
-                            VLOG(1) << "Node ready to compute: " << node->getNumPacketsToSend()*(total_nodes-1) << " : " << node->current_iteration_packets;
-                            double compute_duration = (compute_distribution(generator) * data);
-                            void updateComputeTime(double sim_time, double compute_duration) {
-                            heap.push(new Event(simulation_time_s + compute_duration, COMPUTE, node));
-
-                            node->startNextIteration();
-                            if (node->iteration == iterations) {
-                                complete_nodes++;
-                            }
-                            VLOG(1) << "Iteration: " << node->iteration;
-                        }
-                    } else if (packet->iteration == node->iteration + 1) { // Received a packet for the next interation
-                        VLOG(2) << "Received packet for the next iteration";
-                        node->next_iteration_packets++;
-                    } else {
-                        LOG(ERROR) << "Incorrect packet iteration for node (Packet: " << packet->iteration << ", Node: " << node->iteration << ")";
-                    }
+                next_node = node->getNextNode(stream, topology, nodes, node_mat);
+                LOG_IF(FATAL, next_node == nullptr);
+                if (packet->atDest(next_node->getX(), next_node->getY(), next_node->getZ())) {
+                    next_node->receivePacket(packet);
                     delete packet;
                     packet = nullptr;
+                    if (next_node->readyToCompute()) {
+                        double compute_duration = compute_distribution(generator) * data;
+                        next_node->updateComputeTime(simulation_time_s, compute_duration);
+                        LOG_IF(FATAL, next_node == nullptr);
+
+                        next_node->startNextIteration();
+                        if (next_node->getIteration() == iterations) {
+                            complete_nodes++;
+                        }
+
+                        heap.push(new Event(simulation_time_s + compute_duration, EventType::COMPUTE, next_node));
+                        VLOG(1) << "Iteration: " << next_node->getIteration();
+                    }
                 } else { // Packet needs to be passed on to next node
-                    bool need_init = false;
-                    std::queue<Packet*> *queue = enqueuePacket(next_node, packet, topology, nodes, need_init);
-                    LOG_IF(FATAL, queue == stream);
-                    if (need_init) {
-                        heap.push(new Event(simulation_time_s + send_distribution(generator), PASS_PACKET, next_node, queue));
+                    Stream* next_stream = next_node->enqueuePacket(packet, topology, nodes);
+                    if (next_stream->needsInit()) {
+                        next_stream->transferPacket();
+                        heap.push(new Event(simulation_time_s + send_distribution(generator), EventType::PASS_PACKET, next_node, next_stream));
                     }
                 }
 
-                // Check the current stream and process the next packet.
-                if (!stream->empty()) {
-                    heap.push(new Event(simulation_time_s + send_distribution(generator), PASS_PACKET, node, stream));
+                if (stream->needsInit()) {
+                    stream->transferPacket();
+                    heap.push(new Event(simulation_time_s + send_distribution(generator), EventType::PASS_PACKET, node, stream));
+                } else {
+                    VLOG(3) << "Stream is empty: " << *node << static_cast<size_t>(stream->getDirection());
                 }
 
                 VLOG(4) << "Pass Packet End";
                 break;
             default:
-                LOG(ERROR) << "Simulation had an event with an unknown type: " << current_event->type;
+                LOG(ERROR) << "Simulation had an event with an unknown type: " << static_cast<size_t>(current_event->type);
                 LOG(ERROR) << "\tsimulation time: " << simulation_time_s;
                 exit(0);
         }
 
         delete current_event; // Event's are created with new, so we need to delete them when we're done with them
+        current_event = nullptr;
     }
+
+    LOG(INFO) << "Ending simulation...";
 
     LOG_IF(ERROR, !heap.empty());
     while(!node_mat.empty()) {
@@ -224,7 +224,9 @@ double runSimulation(size_t nodes, size_t data, double compute_time, double late
             while(!z_vec->empty()) {
                 Node *node = z_vec->back();
                 z_vec->pop_back();
-                LOG(INFO) << "Compute/Transfer Ratio: " << node->total_wait_time/(node->total_wait_time + node->total_compute_time) * 100 << "%";
+                LOG(INFO) << "Compute/Transfer Ratio: " << node->getComputeRatio() * 100 << "%";
+                LOG(INFO) << "Wait Time: : " << node->getWaitTime(); 
+                LOG(INFO) << "Compute Time: : " << node->getComputeTime();
                 delete node;
             }
             delete y_vec->back();
@@ -247,12 +249,12 @@ int main(int argc, char **argv) {
     // Intiate
     size_t iterations = 100;
     size_t nodes = 5;
-    size_t data = 200;
+    size_t data = 1000;
     double compute_time= 0.005;
     double latency = 0.00001;
-    //unsigned int topology = RING;
-    unsigned int topology = GRID;
-    //unsigned int topology = CUBE;
+    //Topology topology = Topology::RING;
+    Topology topology = Topology::GRID;
+    //Topology topology = Topology::CUBE;
 
     if (argc >= 2) {
         nodes = atoi(argv[1]);

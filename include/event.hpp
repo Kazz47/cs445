@@ -11,8 +11,9 @@ class Event {
     public:
         const double time;
         const EventType type;
+        size_t iteration;
         Node *node = nullptr;
-        std::queue<Packet*> *stream = nullptr;
+        Stream* stream = nullptr;
 
         Event(double time, EventType type) : time(time), type(type) {
             node = nullptr;
@@ -21,13 +22,14 @@ class Event {
             //cout << "created an event with event type: " << this->type << endl;
         }
 
-        Event(double time, EventType type, Node *node) : time(time), type(type), node(node) {
+        Event(double time, EventType type, Node* node) : time(time), type(type), node(node) {
             stream = nullptr;
+            iteration = node->getIteration();
             //cout << "created an event with simulation time: " << this->time << endl;
             //cout << "created an event with event type: " << this->type << endl;
         }
 
-        Event(double time, EventType type, Node *node, std::queue<Packet*> *stream) : time(time), type(type), node(node), stream(stream) {
+        Event(double time, EventType type, Node* node, Stream* stream) : time(time), type(type), node(node), stream(stream) {
             //cout << "created an event with simulation time: " << this->time << endl;
             //cout << "created an event with event type: " << this->type << endl;
         }
