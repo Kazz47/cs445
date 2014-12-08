@@ -22,6 +22,7 @@ class Node {
 
         bool ready_to_compute = false;
 
+        double mean_iteration_time = 0;
         double previous_compute_time = 0;
         double total_wait_time = 0;
         double total_compute_time = 0;
@@ -50,6 +51,8 @@ class Node {
 
         Stream* enqueuePacket(Packet* packet, Topology topology, size_t num_nodes);
         Node* getNextNode(Stream *stream, Topology topology, size_t num_nodes, std::vector<std::vector<std::vector<Node*>*>*> node_mat);
+
+        void writeMeanCompute(size_t id);
 
         bool operator==(const Node& j) const;
         bool operator!=(const Node& j) const;

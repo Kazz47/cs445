@@ -51,7 +51,7 @@ std::ostream& operator<< ( std::ostream& out, Event& event) {
     return out;
 }
 
-double runSimulation(size_t nodes, size_t data, double compute_time, double latency, Topology topology, size_t iterations) {
+double runSimulation(size_t nodes, size_t data, double compute_time, double latency, Topology topology, size_t iterations, size_t pass_num) {
     size_t nodes_x = 0;
     size_t nodes_y = 0;
     size_t nodes_z = 0;
@@ -180,6 +180,7 @@ double runSimulation(size_t nodes, size_t data, double compute_time, double late
                         LOG_IF(FATAL, next_node == nullptr);
 
                         next_node->startNextIteration();
+                        next_node->writeMeanCompute(pass_num);
                         if (next_node->getIteration() == iterations) {
                             complete_nodes++;
                         }
@@ -247,13 +248,13 @@ int main(int argc, char **argv) {
     FLAGS_logtostderr = 1;
 
     // Intiate
-    size_t iterations = 100;
+    size_t iterations = 500;
     size_t nodes = 5;
-    size_t data = 1000;
+    size_t data = 200;
     double compute_time= 0.005;
     double latency = 0.00001;
-    //Topology topology = Topology::RING;
-    Topology topology = Topology::GRID;
+    Topology topology = Topology::RING;
+    //Topology topology = Topology::GRID;
     //Topology topology = Topology::CUBE;
 
     if (argc >= 2) {
@@ -282,7 +283,7 @@ int main(int argc, char **argv) {
 
     for (int i = 0; i < 1; i++) {
         for (int j = 0; j < 10; j++) {
-            double simulation_time = runSimulation(nodes, data, compute_time, latency, topology, iterations);
+            double simulation_time = runSimulation(nodes, data, compute_time, latency, topology, iterations, j);
             simulation_times.push_back(simulation_time);
         }
 

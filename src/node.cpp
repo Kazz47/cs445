@@ -1,5 +1,8 @@
 #include "node.hpp"
 
+#include <sstream>
+#include <fstream>
+
 #include <glog/logging.h>
 
 Node::Node(size_t x, size_t y, size_t z, size_t iteration, size_t num_packets_to_send, size_t num_packets_to_receive) : x(x), y(y), z(z), iteration(iteration), num_packets_to_send(num_packets_to_send), num_packets_to_receive(num_packets_to_receive) {
@@ -61,6 +64,9 @@ void Node::startNextIteration() {
 void Node::updateComputeTime(double sim_time, double compute_duration) {
     this->total_compute_time += compute_duration;
     this->total_wait_time = sim_time + compute_duration - total_compute_time;
+
+    this->mean_iteration_time = ((sim_time - previous_compute_time) + (this->iteration * this->mean_iteration_time)) / (this->iteration + 1);
+    this->previous_compute_time = sim_time;
 }
 
 void Node::receivePacket(Packet* packet) {
@@ -249,6 +255,14 @@ Node *Node::getNextNode(
     }
     VLOG(3) << "NEXT: " << *next_node;
     return next_node;
+}
+
+void Node::writeMeanCompute(size_t id) {
+    std::stringstream filename;
+    filename << id << "_" << this->getX() << "_" << this->getY() << "_" << getZ() << ".dat";
+    std::ofstream outfile(filename.str(), std::ios::app);
+    outfile << this->iteration << "\t" << this->mean_iteration_time << std::endl;
+    outfile.close();
 }
 
 bool Node::operator==(const Node& j) const {
