@@ -14,6 +14,7 @@
 
 // Stats vectors
 std::vector<double> simulation_times;
+std::vector<double> percent_wait_times;
 
 // Output File
 std::ofstream outfile;
@@ -51,7 +52,7 @@ std::ostream& operator<< ( std::ostream& out, Event& event) {
     return out;
 }
 
-double runSimulation(size_t nodes, size_t data, double compute_time, double latency, Topology topology, size_t iterations, size_t pass_num) {
+double runSimulation(size_t nodes, size_t data, double compute_time, double latency, Topology topology, size_t iterations, size_t pass_num, double* precent_wait_time) {
     size_t nodes_x = 0;
     size_t nodes_y = 0;
     size_t nodes_z = 0;
@@ -103,6 +104,7 @@ double runSimulation(size_t nodes, size_t data, double compute_time, double late
                 Node *node = new Node(x, y, z, 0, packets_per_node, packets_per_node*(total_nodes - 1));
                 y_vec->push_back(node);
                 double compute_duration = compute_distribution(generator) * data;
+                //double compute_duration =  compute_time * data;
                 node->updateComputeTime(simulation_time_s, compute_duration);
                 LOG_IF(FATAL, node == nullptr);
                 heap.push(new Event(simulation_time_s + compute_duration, EventType::COMPUTE, node));
@@ -176,11 +178,12 @@ double runSimulation(size_t nodes, size_t data, double compute_time, double late
                     packet = nullptr;
                     if (next_node->readyToCompute()) {
                         double compute_duration = compute_distribution(generator) * data;
+                        //double compute_duration = compute_time * data;
                         next_node->updateComputeTime(simulation_time_s, compute_duration);
                         LOG_IF(FATAL, next_node == nullptr);
 
                         next_node->startNextIteration();
-                        next_node->writeMeanCompute(pass_num);
+                        next_node->writeStats(pass_num);
                         if (next_node->getIteration() == iterations) {
                             complete_nodes++;
                         }
@@ -215,9 +218,10 @@ double runSimulation(size_t nodes, size_t data, double compute_time, double late
         current_event = nullptr;
     }
 
-    LOG(INFO) << "Ending simulation...";
+    LOG(INFO) << "Ending simulation: " << pass_num;
 
-    LOG_IF(ERROR, !heap.empty());
+    double total_wait_time = 0;
+    double total_compute_time = 0;
     while(!node_mat.empty()) {
         std::vector<std::vector<Node*>*> *y_vec = node_mat.back();
         while(!y_vec->empty()) {
@@ -225,9 +229,11 @@ double runSimulation(size_t nodes, size_t data, double compute_time, double late
             while(!z_vec->empty()) {
                 Node *node = z_vec->back();
                 z_vec->pop_back();
-                LOG(INFO) << "Compute/Transfer Ratio: " << node->getComputeRatio() * 100 << "%";
-                LOG(INFO) << "Wait Time: : " << node->getWaitTime(); 
-                LOG(INFO) << "Compute Time: : " << node->getComputeTime();
+                total_wait_time += node->getWaitTime();
+                total_compute_time += node->getComputeTime();
+                VLOG(2) << "Percent Wait Time: " << node->getComputeRatio() * 100 << "%";
+                VLOG(2) << "Wait Time: : " << node->getWaitTime();
+                VLOG(2) << "Compute Time: : " << node->getComputeTime();
                 delete node;
             }
             delete y_vec->back();
@@ -238,6 +244,7 @@ double runSimulation(size_t nodes, size_t data, double compute_time, double late
     }
 
     VLOG(1) << "The simulation ended at time: " << simulation_time_s;
+    *precent_wait_time = total_wait_time / (total_wait_time + total_compute_time) * 100;
     return simulation_time_s;
 }
 
@@ -250,11 +257,11 @@ int main(int argc, char **argv) {
     // Intiate
     size_t iterations = 500;
     size_t nodes = 5;
-    size_t data = 200;
-    double compute_time= 0.005;
-    double latency = 0.00001;
-    Topology topology = Topology::RING;
-    //Topology topology = Topology::GRID;
+    size_t data = 10000;
+    double compute_time = 0.005;
+    double latency = 0.000001;
+    //Topology topology = Topology::RING;
+    Topology topology = Topology::GRID;
     //Topology topology = Topology::CUBE;
 
     if (argc >= 2) {
@@ -278,37 +285,48 @@ int main(int argc, char **argv) {
 
     // Open files
     std::stringstream filename;
-    filename << "nbody_stats" << ".dat";
+    filename << "nbody" << ".stat";
     outfile.open(filename.str());
 
-    for (int i = 0; i < 1; i++) {
-        for (int j = 0; j < 10; j++) {
-            double simulation_time = runSimulation(nodes, data, compute_time, latency, topology, iterations, j);
-            simulation_times.push_back(simulation_time);
-        }
-
-        // Collect and print statistics.
-        double sum_time = std::accumulate(simulation_times.begin(), simulation_times.end(), 0.0);
-        double min_time = *std::min_element(simulation_times.begin(), simulation_times.end());
-        double max_time = *std::max_element(simulation_times.begin(), simulation_times.end());
-        double avg_time = sum_time / simulation_times.size();
-        double sqr_time = std::inner_product(simulation_times.begin(), simulation_times.end(), simulation_times.begin(), 0.0);
-        double std_time = std::sqrt(sqr_time/ simulation_times.size() - avg_time* avg_time);
-
-        outfile << "------------------------------------------" << std::endl;
-        outfile << "-------------------- " << i << " -------------------" << std::endl;
-        outfile << "------------------------------------------" << std::endl;
-        outfile << std::endl;
-
-        outfile << "------------------------------------------" << std::endl;
-        outfile << "---------------- RUN TIMES ---------------" << std::endl;
-        outfile << "------------------------------------------" << std::endl;
-        outfile << "Min: " << std::fixed <<  min_time << std::endl;
-        outfile << "Max: " << std::fixed << max_time << std::endl;
-        outfile << "Mean: " << std::fixed << avg_time << std::endl;
-        outfile << "Stdev: " << std::fixed << std_time << std::endl;
-        outfile << std::endl;
-
+    for (int i = 0; i < 10; i++) {
+        double percent_wait_time;
+        double simulation_time = runSimulation(nodes, data, compute_time, latency, topology, iterations, i, &percent_wait_time);
+        simulation_times.push_back(simulation_time);
+        percent_wait_times.push_back(percent_wait_time);
     }
+
+    // Collect and print statistics.
+    double sum_time = std::accumulate(simulation_times.begin(), simulation_times.end(), 0.0);
+    double min_time = *std::min_element(simulation_times.begin(), simulation_times.end());
+    double max_time = *std::max_element(simulation_times.begin(), simulation_times.end());
+    double avg_time = sum_time / simulation_times.size();
+    double sqr_time = std::inner_product(simulation_times.begin(), simulation_times.end(), simulation_times.begin(), 0.0);
+    double std_time = std::sqrt(sqr_time/ simulation_times.size() - avg_time * avg_time);
+
+    outfile << "------------------------------------------" << std::endl;
+    outfile << "---------------- RUN TIMES ---------------" << std::endl;
+    outfile << "------------------------------------------" << std::endl;
+    outfile << "Min: " << std::fixed <<  min_time << std::endl;
+    outfile << "Max: " << std::fixed << max_time << std::endl;
+    outfile << "Mean: " << std::fixed << avg_time << std::endl;
+    outfile << "Stdev: " << std::fixed << std_time << std::endl;
+    outfile << std::endl;
+
+    double sum_perc = std::accumulate(percent_wait_times.begin(), percent_wait_times.end(), 0.0);
+    double min_perc = *std::min_element(percent_wait_times.begin(), percent_wait_times.end());
+    double max_perc = *std::max_element(percent_wait_times.begin(), percent_wait_times.end());
+    double avg_perc = sum_perc / percent_wait_times.size();
+    double sqr_perc = std::inner_product(percent_wait_times.begin(), percent_wait_times.end(), percent_wait_times.begin(), 0.0);
+    double std_perc = std::sqrt(sqr_perc / percent_wait_times.size() - avg_perc * avg_perc);
+
+    outfile << "------------------------------------------" << std::endl;
+    outfile << "-------------- WAIT PERCENTS -------------" << std::endl;
+    outfile << "------------------------------------------" << std::endl;
+    outfile << "Min: " << std::fixed <<  min_perc << "%" << std::endl;
+    outfile << "Max: " << std::fixed << max_perc << "%" << std::endl;
+    outfile << "Mean: " << std::fixed << avg_perc << "%" << std::endl;
+    outfile << "Stdev: " << std::fixed << std_perc << "%" << std::endl;
+    outfile << std::endl;
+
     outfile.close();
 }

@@ -66,6 +66,7 @@ void Node::updateComputeTime(double sim_time, double compute_duration) {
     this->total_wait_time = sim_time + compute_duration - total_compute_time;
 
     this->mean_iteration_time = ((sim_time - previous_compute_time) + (this->iteration * this->mean_iteration_time)) / (this->iteration + 1);
+    this->previous_iteration_duration = sim_time - previous_compute_time;
     this->previous_compute_time = sim_time;
 }
 
@@ -257,11 +258,11 @@ Node *Node::getNextNode(
     return next_node;
 }
 
-void Node::writeMeanCompute(size_t id) {
+void Node::writeStats(size_t pass_num) {
     std::stringstream filename;
-    filename << id << "_" << this->getX() << "_" << this->getY() << "_" << getZ() << ".dat";
+    filename << pass_num << ":" << this->getX() << "_" << this->getY() << "_" << getZ() << ".dat";
     std::ofstream outfile(filename.str(), std::ios::app);
-    outfile << this->iteration << "\t" << this->mean_iteration_time << std::endl;
+    outfile << this->iteration << "\t" << this->previous_iteration_duration << "\t" << this->mean_iteration_time << std::endl;
     outfile.close();
 }
 
