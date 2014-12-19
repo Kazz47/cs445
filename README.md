@@ -25,7 +25,7 @@ Default values:
 
 n-Body Simulation
 ---
-./kn_nbody N S C L
+./kg_nbody N S C L
 
 Default values:
 - Nodes = 5
